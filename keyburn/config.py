@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
-from typing import Iterable, Optional
-
 
 DEFAULT_EXCLUDE_DIRS = {
     ".git",
@@ -39,7 +38,7 @@ def _compile_allowlist(patterns: Iterable[str]) -> list[re.Pattern[str]]:
     return compiled
 
 
-def load_config(config_path: Optional[Path]) -> ScanConfig:
+def load_config(config_path: Path | None) -> ScanConfig:
     """Load keyburn config. Missing config is not an error."""
     if config_path is None:
         config_path = Path("keyburn.toml")

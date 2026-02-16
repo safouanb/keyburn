@@ -3,8 +3,6 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Optional
-
 
 # Character sets for entropy calculation
 _BASE64_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
@@ -18,11 +16,23 @@ BASE64_ENTROPY_THRESHOLD = 4.2
 HEX_ENTROPY_THRESHOLD = 3.5
 
 # Keywords that signal a variable is meant to hold a secret
-SECRET_VAR_KEYWORDS = frozenset({
-    "key", "secret", "token", "password", "passwd", "credential",
-    "auth", "api_key", "apikey", "api-key", "access_token",
-    "private", "encryption",
-})
+SECRET_VAR_KEYWORDS = frozenset(
+    {
+        "key",
+        "secret",
+        "token",
+        "password",
+        "passwd",
+        "credential",
+        "auth",
+        "api_key",
+        "apikey",
+        "api-key",
+        "access_token",
+        "private",
+        "encryption",
+    }
+)
 
 # Common false positives — hashes, UUIDs, module names, etc.
 _FALSE_POSITIVE_RX = re.compile(
@@ -39,9 +49,9 @@ _FALSE_POSITIVE_RX = re.compile(
 # Assignment pattern: VAR_NAME = "value" or VAR_NAME: "value"
 _ASSIGNMENT_RX = re.compile(
     r"""(?:^|[;\s])"""
-    r"""([A-Za-z_][A-Za-z0-9_.-]*)"""   # variable name
-    r"""\s*[:=]\s*"""                     # assignment operator
-    r"""['\"]([^'"]{12,})['\"]""",        # quoted value
+    r"""([A-Za-z_][A-Za-z0-9_.-]*)"""  # variable name
+    r"""\s*[:=]\s*"""  # assignment operator
+    r"""['\"]([^'"]{12,})['\"]""",  # quoted value
 )
 
 
@@ -122,7 +132,7 @@ def scan_line_entropy(
         hex_ratio = _charset_ratio(value, _HEX_CHARS)
 
         entropy = shannon_entropy(value)
-        charset: Optional[str] = None
+        charset: str | None = None
 
         if hex_ratio > 0.95 and entropy >= hex_threshold:
             charset = "hex"

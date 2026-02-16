@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable
+from collections.abc import Iterable
 
 from . import __version__
 from .scanner import Finding
-
 
 _LEVEL = {"high": "error", "medium": "warning", "low": "note"}
 
@@ -24,7 +23,9 @@ def findings_to_sarif(findings: Iterable[Finding]) -> dict:
                     "id": f.pattern_id,
                     "name": f.pattern_id,
                     "shortDescription": {"text": f.title},
-                    "fullDescription": {"text": "Potential secret detected. Rotate/revoke if real."},
+                    "fullDescription": {
+                        "text": "Potential secret detected. Rotate/revoke if real."
+                    },
                     "help": {"text": help_text},
                     "properties": {"tags": ["secret"], "severity": f.severity.value},
                 }
@@ -64,4 +65,3 @@ def findings_to_sarif(findings: Iterable[Finding]) -> dict:
             }
         ],
     }
-

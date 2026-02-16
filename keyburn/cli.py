@@ -2,20 +2,17 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
-from typing import Optional
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from .config import load_config
 from .patterns import Severity
 from .sarif import findings_to_sarif
 from .scanner import scan_path, should_fail, summarize
-
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -27,7 +24,7 @@ _SEVERITY_STYLE = {
 }
 
 
-def _write_text(out: Optional[Path], text: str) -> None:
+def _write_text(out: Path | None, text: str) -> None:
     if out is None:
         sys.stdout.write(text)
         if not text.endswith("\n"):
@@ -52,7 +49,7 @@ def _print_findings_text(findings: list, summ: dict) -> None:
         console.print("[bold green]No secrets found.[/bold green]")
         return
 
-    for i, f in enumerate(findings):
+    for f in findings:
         sev_style = _SEVERITY_STYLE.get(f.severity.value, "")
         header = f"[{sev_style}]{f.severity.value.upper()}[/{sev_style}]  {f.title}"
         body_lines = [
@@ -64,13 +61,15 @@ def _print_findings_text(findings: list, summ: dict) -> None:
             body_lines.append("")
             body_lines.append(f"  [bold]How to fix:[/bold] {f.remediation}")
 
-        console.print(Panel(
-            "\n".join(body_lines),
-            title=header,
-            title_align="left",
-            border_style=sev_style or "dim",
-            expand=False,
-        ))
+        console.print(
+            Panel(
+                "\n".join(body_lines),
+                title=header,
+                title_align="left",
+                border_style=sev_style or "dim",
+                expand=False,
+            )
+        )
 
     console.print()
     console.print(
@@ -84,11 +83,11 @@ def _print_findings_text(findings: list, summ: dict) -> None:
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), exists=True),
-    config: Optional[Path] = typer.Option(None, "--config", help="Path to keyburn.toml"),
+    config: Path | None = typer.Option(None, "--config", help="Path to keyburn.toml"),
     format: str = typer.Option(
         "text", "--format", help="Output format: text|json|sarif", show_default=True
     ),
-    out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
+    out: Path | None = typer.Option(None, "--out", help="Write output to a file"),
     fail_on: Severity = typer.Option(Severity.high, "--fail-on", help="CI fail threshold"),
 ) -> None:
     cfg = load_config(config)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import os
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 from .config import ScanConfig
 from .entropy import scan_line_entropy
@@ -78,7 +78,7 @@ def scan_text(
     text: str,
     rel_path: str,
     patterns: Iterable[SecretPattern] = PATTERNS,
-    cfg: Optional[ScanConfig] = None,
+    cfg: ScanConfig | None = None,
     enable_entropy: bool = True,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
@@ -112,7 +112,9 @@ def scan_text(
                         column=start + 1,
                         match_redacted=redact(secret),
                         fingerprint=fingerprint,
-                        message=f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real.",
+                        message=(
+                            f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real."
+                        ),
                         line_text=redact_in_line(line, start, end),
                         remediation=pat.remediation,
                     )
@@ -161,7 +163,7 @@ def scan_text(
 def scan_path(
     path: Path,
     *,
-    cfg: Optional[ScanConfig] = None,
+    cfg: ScanConfig | None = None,
     patterns: Iterable[SecretPattern] = PATTERNS,
     enable_entropy: bool = True,
 ) -> list[Finding]:

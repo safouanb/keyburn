@@ -16,4 +16,3 @@ def redact_in_line(line: str, start: int, end: int) -> str:
     if start < 0 or end < start or end > len(line):
         return line
     return line[:start] + redact(line[start:end]) + line[end:]
-

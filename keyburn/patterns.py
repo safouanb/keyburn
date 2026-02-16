@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
-import re
-from typing import Pattern
+from re import Pattern
 
 
 class Severity(str, Enum):
@@ -125,7 +125,9 @@ PATTERNS: list[SecretPattern] = [
         severity=Severity.high,
         category="github",
         regex=_re(r"\bghu_[A-Za-z0-9]{36}\b", flags=0),
-        remediation="GitHub App tokens are short-lived but still sensitive. Use secrets management.",
+        remediation=(
+            "GitHub App tokens are short-lived but still sensitive. Use secrets management."
+        ),
     ),
     SecretPattern(
         id="github-refresh-token",
@@ -157,7 +159,10 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a Slack incoming webhook URL.",
         severity=Severity.medium,
         category="slack",
-        regex=_re(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+", flags=0),
+        regex=_re(
+            r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+",
+            flags=0,
+        ),
         remediation=(
             "Revoke this webhook in Slack and create a new one. "
             "Store the URL in an environment variable (SLACK_WEBHOOK_URL)."
@@ -270,8 +275,7 @@ PATTERNS: list[SecretPattern] = [
         ),
         secret_group=2,
         remediation=(
-            "Move to .env file and load with dotenv. "
-            "Revoke at platform.openai.com/api-keys."
+            "Move to .env file and load with dotenv. Revoke at platform.openai.com/api-keys."
         ),
     ),
     SecretPattern(
@@ -293,10 +297,7 @@ PATTERNS: list[SecretPattern] = [
         severity=Severity.high,
         category="ai",
         regex=_re(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b", flags=0),
-        remediation=(
-            "Revoke at console.anthropic.com. "
-            "Use ANTHROPIC_API_KEY env var."
-        ),
+        remediation=("Revoke at console.anthropic.com. Use ANTHROPIC_API_KEY env var."),
     ),
     SecretPattern(
         id="groq-api-key",
@@ -356,7 +357,9 @@ PATTERNS: list[SecretPattern] = [
     SecretPattern(
         id="supabase-anon-key-server",
         title="Supabase Anon Key in Server Code",
-        description="Supabase anon key found in a server-side file where service_role may be intended.",
+        description=(
+            "Supabase anon key found in a server-side file where service_role may be intended."
+        ),
         severity=Severity.low,
         category="supabase",
         regex=_re(
@@ -376,8 +379,7 @@ PATTERNS: list[SecretPattern] = [
         id="nextjs-public-secret",
         title="Secret in NEXT_PUBLIC_ Variable",
         description=(
-            "A secret-looking value in a NEXT_PUBLIC_ env var — "
-            "these are exposed to the browser."
+            "A secret-looking value in a NEXT_PUBLIC_ env var — these are exposed to the browser."
         ),
         severity=Severity.high,
         category="framework",
@@ -445,8 +447,7 @@ PATTERNS: list[SecretPattern] = [
         category="twilio",
         regex=_re(r"\bSK[0-9a-fA-F]{32}\b", flags=0),
         remediation=(
-            "Revoke at twilio.com/console. "
-            "Use TWILIO_API_KEY and TWILIO_API_SECRET env vars."
+            "Revoke at twilio.com/console. Use TWILIO_API_KEY and TWILIO_API_SECRET env vars."
         ),
     ),
     SecretPattern(
@@ -455,7 +456,9 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a Twilio auth token assignment.",
         severity=Severity.high,
         category="twilio",
-        regex=_re(r"\b(twilio[_-]?auth[_-]?token|TWILIO_AUTH_TOKEN)\b\s*[:=]\s*['\"]?([a-f0-9]{32})['\"]?"),
+        regex=_re(
+            r"\b(twilio[_-]?auth[_-]?token|TWILIO_AUTH_TOKEN)\b\s*[:=]\s*['\"]?([a-f0-9]{32})['\"]?"
+        ),
         secret_group=2,
         remediation="Rotate in Twilio console. Use TWILIO_AUTH_TOKEN env var.",
     ),
@@ -570,12 +573,9 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a Discord bot token.",
         severity=Severity.high,
         category="discord",
-        regex=_re(
-            r"[MN][A-Za-z\d]{23,}\.[A-Za-z\d\-_]{6}\.[A-Za-z\d\-_]{27,}", flags=0
-        ),
+        regex=_re(r"[MN][A-Za-z\d]{23,}\.[A-Za-z\d\-_]{6}\.[A-Za-z\d\-_]{27,}", flags=0),
         remediation=(
-            "Regenerate at discord.com/developers/applications. "
-            "Use DISCORD_TOKEN env var."
+            "Regenerate at discord.com/developers/applications. Use DISCORD_TOKEN env var."
         ),
     ),
     SecretPattern(
@@ -584,9 +584,7 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a Discord webhook URL.",
         severity=Severity.medium,
         category="discord",
-        regex=_re(
-            r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_\-]+", flags=0
-        ),
+        regex=_re(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_\-]+", flags=0),
         remediation="Delete this webhook and create a new one. Store URL in env var.",
     ),
     # ------------------------------------------------------------------
@@ -610,9 +608,7 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a JWT secret being hardcoded.",
         severity=Severity.high,
         category="crypto",
-        regex=_re(
-            r"\b(jwt[_-]?secret|JWT_SECRET|jwt[_-]?key)\b\s*[:=]\s*['\"]([^'\"]{8,})['\"]"
-        ),
+        regex=_re(r"\b(jwt[_-]?secret|JWT_SECRET|jwt[_-]?key)\b\s*[:=]\s*['\"]([^'\"]{8,})['\"]"),
         secret_group=2,
         remediation=(
             "Move JWT secrets to environment variables. "
@@ -676,7 +672,9 @@ PATTERNS: list[SecretPattern] = [
         severity=Severity.high,
         category="clerk",
         regex=_re(r"\bsk_live_[A-Za-z0-9]{20,}\b", flags=0),
-        remediation="Rotate in Clerk dashboard. Use CLERK_SECRET_KEY env var. Keep server-side only.",
+        remediation=(
+            "Rotate in Clerk dashboard. Use CLERK_SECRET_KEY env var. Keep server-side only."
+        ),
     ),
     # ------------------------------------------------------------------
     # Vercel
@@ -687,9 +685,7 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a Vercel authentication token.",
         severity=Severity.high,
         category="vercel",
-        regex=_re(
-            r"\b(VERCEL_TOKEN|vercel[_-]?token)\b\s*[:=]\s*['\"]?([A-Za-z0-9]{24,})['\"]?"
-        ),
+        regex=_re(r"\b(VERCEL_TOKEN|vercel[_-]?token)\b\s*[:=]\s*['\"]?([A-Za-z0-9]{24,})['\"]?"),
         secret_group=2,
         remediation="Regenerate at vercel.com/account/tokens. Use VERCEL_TOKEN env var.",
     ),
@@ -706,7 +702,9 @@ PATTERNS: list[SecretPattern] = [
             r"\b(NETLIFY_AUTH_TOKEN|netlify[_-]?token)\b\s*[:=]\s*['\"]?([A-Za-z0-9_\-]{30,})['\"]?"
         ),
         secret_group=2,
-        remediation="Regenerate at app.netlify.com/user/applications. Use NETLIFY_AUTH_TOKEN env var.",
+        remediation=(
+            "Regenerate at app.netlify.com/user/applications. Use NETLIFY_AUTH_TOKEN env var."
+        ),
     ),
     # ------------------------------------------------------------------
     # Doppler
@@ -731,8 +729,7 @@ PATTERNS: list[SecretPattern] = [
         category="sentry",
         regex=_re(r"https://[a-f0-9]{32}:[a-f0-9]{32}@[a-z0-9.]+\.ingest\.sentry\.io/\d+"),
         remediation=(
-            "Modern Sentry DSNs don't need the secret part. "
-            "Use the public DSN format instead."
+            "Modern Sentry DSNs don't need the secret part. Use the public DSN format instead."
         ),
     ),
     # ------------------------------------------------------------------
@@ -744,9 +741,7 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like a secret value assigned to a variable with 'secret' in the name.",
         severity=Severity.medium,
         category="credentials",
-        regex=_re(
-            r"\b([A-Z_]*SECRET[A-Z_]*)\b\s*[:=]\s*['\"]([^'\"\s]{10,})['\"]"
-        ),
+        regex=_re(r"\b([A-Z_]*SECRET[A-Z_]*)\b\s*[:=]\s*['\"]([^'\"\s]{10,})['\"]"),
         secret_group=2,
         remediation=(
             "Move secret values to environment variables or a .env file. "
@@ -759,9 +754,7 @@ PATTERNS: list[SecretPattern] = [
         description="Looks like an API key assigned to a variable with 'api_key' in the name.",
         severity=Severity.medium,
         category="credentials",
-        regex=_re(
-            r"\b([A-Z_]*API[_-]?KEY[A-Z_]*)\b\s*[:=]\s*['\"]([^'\"\s]{10,})['\"]"
-        ),
+        regex=_re(r"\b([A-Z_]*API[_-]?KEY[A-Z_]*)\b\s*[:=]\s*['\"]([^'\"\s]{10,})['\"]"),
         secret_group=2,
         remediation=(
             "Move API keys to environment variables or a .env file. "
