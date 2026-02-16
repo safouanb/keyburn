@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from .config import ScanConfig
+from .entropy import scan_line_entropy
 from .patterns import PATTERNS, SecretPattern, Severity
 from .redact import redact, redact_in_line
 
@@ -23,9 +24,10 @@ class Finding:
     fingerprint: str
     message: str
     line_text: str
+    remediation: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "pattern_id": self.pattern_id,
             "title": self.title,
             "severity": self.severity.value,
@@ -37,6 +39,9 @@ class Finding:
             "message": self.message,
             "line_text": self.line_text,
         }
+        if self.remediation:
+            d["remediation"] = self.remediation
+        return d
 
 
 def _is_binary(data: bytes) -> bool:
@@ -74,11 +79,15 @@ def scan_text(
     rel_path: str,
     patterns: Iterable[SecretPattern] = PATTERNS,
     cfg: Optional[ScanConfig] = None,
+    enable_entropy: bool = True,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
     findings: list[Finding] = []
+    # Track fingerprints to avoid duplicate findings from pattern + entropy
+    seen_fingerprints: set[str] = set()
 
     for line_no, line in enumerate(text.splitlines(), start=1):
+        # Pattern-based detection
         for pat in patterns:
             for m in pat.regex.finditer(line):
                 secret = m.group(pat.secret_group) if pat.secret_group else m.group(0)
@@ -89,6 +98,10 @@ def scan_text(
                     continue
 
                 fingerprint = _sha256_hex(secret)
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
+
                 findings.append(
                     Finding(
                         pattern_id=pat.id,
@@ -101,8 +114,47 @@ def scan_text(
                         fingerprint=fingerprint,
                         message=f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real.",
                         line_text=redact_in_line(line, start, end),
+                        remediation=pat.remediation,
                     )
                 )
+
+        # Entropy-based detection
+        if enable_entropy:
+            for ef in scan_line_entropy(line, line_no):
+                if any(rx.search(ef.value) for rx in cfg.allowlist_regex):
+                    continue
+
+                fingerprint = _sha256_hex(ef.value)
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
+
+                findings.append(
+                    Finding(
+                        pattern_id="entropy-" + ef.charset,
+                        title=f"High-entropy {ef.charset} string in '{ef.var_name}'",
+                        severity=Severity.medium,
+                        path=rel_path,
+                        line=ef.line,
+                        column=ef.column,
+                        match_redacted=redact(ef.value),
+                        fingerprint=fingerprint,
+                        message=(
+                            f"High-entropy {ef.charset} string (entropy={ef.entropy}) "
+                            f"assigned to '{ef.var_name}'. Could be a secret."
+                        ),
+                        line_text=redact_in_line(
+                            line,
+                            ef.column - 1,
+                            ef.column - 1 + len(ef.value),
+                        ),
+                        remediation=(
+                            f"If '{ef.var_name}' holds a real secret, move it to an "
+                            "environment variable or .env file. Add .env to .gitignore."
+                        ),
+                    )
+                )
+
     return findings
 
 
@@ -111,6 +163,7 @@ def scan_path(
     *,
     cfg: Optional[ScanConfig] = None,
     patterns: Iterable[SecretPattern] = PATTERNS,
+    enable_entropy: bool = True,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
     findings: list[Finding] = []
@@ -137,7 +190,15 @@ def scan_path(
 
         rel = str(fpath.resolve().relative_to(base))
         text = data.decode("utf-8", errors="replace")
-        findings.extend(scan_text(text=text, rel_path=rel, patterns=patterns, cfg=cfg))
+        findings.extend(
+            scan_text(
+                text=text,
+                rel_path=rel,
+                patterns=patterns,
+                cfg=cfg,
+                enable_entropy=enable_entropy,
+            )
+        )
 
     return findings
 

@@ -18,13 +18,14 @@ def findings_to_sarif(findings: Iterable[Finding]) -> dict:
     for f in findings:
         if f.pattern_id not in rule_index:
             rule_index[f.pattern_id] = len(rules)
+            help_text = f.remediation or "Remove the secret from git history and rotate/revoke it."
             rules.append(
                 {
                     "id": f.pattern_id,
                     "name": f.pattern_id,
                     "shortDescription": {"text": f.title},
                     "fullDescription": {"text": "Potential secret detected. Rotate/revoke if real."},
-                    "help": {"text": "Remove the secret from git history and rotate/revoke it."},
+                    "help": {"text": help_text},
                     "properties": {"tags": ["secret"], "severity": f.severity.value},
                 }
             )

@@ -8,6 +8,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from .config import load_config
@@ -18,6 +19,12 @@ from .scanner import scan_path, should_fail, summarize
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
+
+_SEVERITY_STYLE = {
+    "high": "bold red",
+    "medium": "bold yellow",
+    "low": "dim",
+}
 
 
 def _write_text(out: Optional[Path], text: str) -> None:
@@ -38,6 +45,40 @@ def _maybe_write_step_summary(summary_md: str) -> None:
         Path(step_path).write_text(summary_md, encoding="utf-8")
     except OSError:
         return
+
+
+def _print_findings_text(findings: list, summ: dict) -> None:
+    if not findings:
+        console.print("[bold green]No secrets found.[/bold green]")
+        return
+
+    for i, f in enumerate(findings):
+        sev_style = _SEVERITY_STYLE.get(f.severity.value, "")
+        header = f"[{sev_style}]{f.severity.value.upper()}[/{sev_style}]  {f.title}"
+        body_lines = [
+            f"  File: {f.path}:{f.line}:{f.column}",
+            f"  Rule: {f.pattern_id}",
+            f"  Match: {f.match_redacted}",
+        ]
+        if f.remediation:
+            body_lines.append("")
+            body_lines.append(f"  [bold]How to fix:[/bold] {f.remediation}")
+
+        console.print(Panel(
+            "\n".join(body_lines),
+            title=header,
+            title_align="left",
+            border_style=sev_style or "dim",
+            expand=False,
+        ))
+
+    console.print()
+    console.print(
+        f"[bold]Summary:[/bold] {summ['total']} finding(s) — "
+        f"[bold red]{summ['high']} high[/bold red], "
+        f"[bold yellow]{summ['medium']} medium[/bold yellow], "
+        f"{summ['low']} low"
+    )
 
 
 @app.command()
@@ -65,29 +106,12 @@ def scan(
         payload = {"summary": summ, "findings": [f.to_dict() for f in findings]}
         _write_text(out, json.dumps(payload, indent=2))
     else:
-        table = Table(title="keyburn findings", show_lines=False)
-        table.add_column("Severity", style="bold")
-        table.add_column("File")
-        table.add_column("Line", justify="right")
-        table.add_column("Rule")
-        table.add_column("Match")
-        for f in findings:
-            table.add_row(
-                f.severity.value,
-                f.path,
-                str(f.line),
-                f.pattern_id,
-                f.match_redacted,
-            )
-
-        console.print(table)
-        console.print(
-            f"[bold]Summary[/bold] total={summ['total']} high={summ['high']} medium={summ['medium']} low={summ['low']}"
-        )
+        _print_findings_text(findings, summ)
 
         md = (
             "## keyburn\n\n"
-            f"- Findings: **{summ['total']}** (high={summ['high']}, medium={summ['medium']}, low={summ['low']})\n"
+            f"- Findings: **{summ['total']}** "
+            f"(high={summ['high']}, medium={summ['medium']}, low={summ['low']})\n"
         )
         _maybe_write_step_summary(md)
 
