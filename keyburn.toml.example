@@ -1,0 +1,24 @@
+[scan]
+# Maximum file size to scan (bytes)
+max_file_size_bytes = 2097152
+
+# Directories to skip while walking the tree
+exclude_dirs = [
+  ".git",
+  ".venv",
+  "node_modules",
+  "dist",
+  "build",
+]
+
+# (Reserved for future) Glob patterns to skip
+exclude_globs = []
+
+[allowlist]
+# Any secret matching one of these regexes is ignored.
+# Use this for known test tokens, docs, or intentionally-fake examples.
+regex = [
+  "^sk_test_",
+  "^ghp_[A-Za-z0-9]{36}$",
+]
+

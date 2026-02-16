@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keyburn"
+version = "0.1.0"
+description = "Dead-simple secret scanner for CI and GitHub Actions."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Keyburn Contributors" }]
+dependencies = [
+  "rich>=13.7.0",
+  "tomli>=2.0.1; python_version < '3.11'",
+  "typer>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+keyburn = "keyburn.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["keyburn*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
