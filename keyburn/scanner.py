@@ -11,6 +11,9 @@ from .entropy import scan_line_entropy
 from .patterns import PATTERNS, SecretPattern, Severity
 from .redact import redact, redact_in_line
 
+# Inline suppression comment — any of these on a line silence all findings for it.
+_IGNORE_MARKERS = ("# keyburn:ignore", "# noqa: keyburn", "# kb:ignore")
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -61,16 +64,94 @@ def _default_config() -> ScanConfig:
     return ScanConfig()
 
 
+def _line_is_ignored(line: str) -> bool:
+    """Return True if the line contains an inline suppression comment."""
+    lower = line.lower()
+    return any(marker in lower for marker in _IGNORE_MARKERS)
+
+
+def _load_gitignore_patterns(root: Path) -> list[str]:
+    """Load .gitignore patterns from root, returned as simple glob strings."""
+    gitignore = root / ".gitignore"
+    if not gitignore.exists():
+        return []
+    patterns: list[str] = []
+    try:
+        for raw in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            patterns.append(line)
+    except OSError:
+        pass
+    return patterns
+
+
+def _matches_gitignore(rel_path: str, patterns: list[str]) -> bool:
+    """Very lightweight gitignore matcher — handles the common cases."""
+    import fnmatch
+
+    # Normalise to forward slashes
+    norm = rel_path.replace(os.sep, "/")
+    name = norm.split("/")[-1]
+
+    for pat in patterns:
+        negated = pat.startswith("!")
+        p = pat.lstrip("!")
+
+        # Directory pattern (trailing slash) — match path prefix
+        if p.endswith("/"):
+            p = p.rstrip("/")
+            if norm.startswith(p + "/") or norm == p:
+                return not negated
+            continue
+
+        # Pattern with no slash — match against basename
+        if "/" not in p:
+            if fnmatch.fnmatch(name, p):
+                return not negated
+        else:
+            # Pattern with slash — match against full relative path
+            if fnmatch.fnmatch(norm, p) or fnmatch.fnmatch(norm, "**/" + p):
+                return not negated
+
+    return False
+
+
 def _iter_files(root: Path, cfg: ScanConfig) -> Iterable[Path]:
     if root.is_file():
         yield root
         return
 
+    gitignore_patterns = _load_gitignore_patterns(root) if cfg.respect_gitignore else []
+
     for dirpath, dirnames, filenames in os.walk(root):
         # In-place prune for speed.
         dirnames[:] = [d for d in dirnames if d not in cfg.exclude_dirs]
+
         for name in filenames:
-            yield Path(dirpath) / name
+            fpath = Path(dirpath) / name
+            if gitignore_patterns:
+                try:
+                    rel = str(fpath.resolve().relative_to(root.resolve()))
+                    if _matches_gitignore(rel, gitignore_patterns):
+                        continue
+                except ValueError:
+                    pass
+
+            # Check exclude_paths (fnmatch against rel path)
+            if cfg.exclude_paths:
+                import fnmatch
+
+                try:
+                    rel = str(fpath.resolve().relative_to(root.resolve()))
+                    norm = rel.replace(os.sep, "/")
+                    if any(fnmatch.fnmatch(norm, p) for p in cfg.exclude_paths):
+                        continue
+                except ValueError:
+                    pass
+
+            yield fpath
 
 
 def scan_text(
@@ -80,15 +161,24 @@ def scan_text(
     patterns: Iterable[SecretPattern] = PATTERNS,
     cfg: ScanConfig | None = None,
     enable_entropy: bool = True,
+    disabled_rules: set[str] | None = None,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
+    _disabled = disabled_rules or cfg.disable_rules
     findings: list[Finding] = []
     # Track fingerprints to avoid duplicate findings from pattern + entropy
     seen_fingerprints: set[str] = set()
 
     for line_no, line in enumerate(text.splitlines(), start=1):
+        # Inline suppression — skip entire line
+        if _line_is_ignored(line):
+            continue
+
         # Pattern-based detection
         for pat in patterns:
+            if pat.id in _disabled:
+                continue
+
             for m in pat.regex.finditer(line):
                 secret = m.group(pat.secret_group) if pat.secret_group else m.group(0)
                 start = m.start(pat.secret_group) if pat.secret_group else m.start(0)
@@ -121,7 +211,7 @@ def scan_text(
                 )
 
         # Entropy-based detection
-        if enable_entropy:
+        if enable_entropy and "entropy" not in _disabled:
             for ef in scan_line_entropy(line, line_no):
                 if any(rx.search(ef.value) for rx in cfg.allowlist_regex):
                     continue
@@ -166,6 +256,7 @@ def scan_path(
     cfg: ScanConfig | None = None,
     patterns: Iterable[SecretPattern] = PATTERNS,
     enable_entropy: bool = True,
+    only_files: list[Path] | None = None,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
     findings: list[Finding] = []
@@ -173,7 +264,14 @@ def scan_path(
     root = path.resolve()
     base = root if root.is_dir() else root.parent
 
-    for fpath in _iter_files(root, cfg):
+    file_iter: Iterable[Path]
+    if only_files is not None:
+        # --diff mode: caller provides the exact file list
+        file_iter = only_files
+    else:
+        file_iter = _iter_files(root, cfg)
+
+    for fpath in file_iter:
         try:
             st = fpath.stat()
         except OSError:
@@ -190,7 +288,11 @@ def scan_path(
         if _is_binary(data):
             continue
 
-        rel = str(fpath.resolve().relative_to(base))
+        try:
+            rel = str(fpath.resolve().relative_to(base))
+        except ValueError:
+            rel = str(fpath)
+
         text = data.decode("utf-8", errors="replace")
         findings.extend(
             scan_text(
@@ -203,6 +305,39 @@ def scan_path(
         )
 
     return findings
+
+
+def load_baseline(baseline_path: Path) -> set[str]:
+    """Load a set of fingerprints from a baseline JSON file."""
+    import json
+
+    if not baseline_path.exists():
+        return set()
+    try:
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return {str(fp) for fp in data}
+        if isinstance(data, dict) and "fingerprints" in data:
+            return {str(fp) for fp in data["fingerprints"]}
+    except (OSError, ValueError):
+        pass
+    return set()
+
+
+def save_baseline(findings: Iterable[Finding], baseline_path: Path) -> None:
+    """Write current finding fingerprints as a baseline JSON file."""
+    import json
+
+    fps = sorted({f.fingerprint for f in findings})
+    baseline_path.write_text(
+        json.dumps({"fingerprints": fps}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def filter_baseline(findings: list[Finding], baseline: set[str]) -> list[Finding]:
+    """Remove findings whose fingerprint appears in the baseline."""
+    return [f for f in findings if f.fingerprint not in baseline]
 
 
 def summarize(findings: Iterable[Finding]) -> dict:

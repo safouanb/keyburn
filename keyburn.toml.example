@@ -1,8 +1,8 @@
 [scan]
-# Maximum file size to scan (bytes)
+# Maximum file size to scan (bytes). Files larger than this are skipped.
 max_file_size_bytes = 2097152
 
-# Directories to skip while walking the tree
+# Directories to skip while walking the tree.
 exclude_dirs = [
   ".git",
   ".venv",
@@ -11,14 +11,31 @@ exclude_dirs = [
   "build",
 ]
 
-# (Reserved for future) Glob patterns to skip
-exclude_globs = []
-
-[allowlist]
-# Any secret matching one of these regexes is ignored.
-# Use this for known test tokens, docs, or intentionally-fake examples.
-regex = [
-  "^sk_test_",
-  "^ghp_[A-Za-z0-9]{36}$",
+# Glob patterns matched against relative file paths to skip.
+# Useful for test fixtures, generated files, or vendor directories.
+# Example: skip everything under tests/fixtures/ and any *.generated.ts file.
+exclude_paths = [
+  "tests/fixtures/**",
+  "**/*.generated.ts",
 ]
 
+# Rule IDs to disable entirely.
+# Use "entropy" to turn off all Shannon entropy checks.
+# Rule IDs match the pattern_id in JSON/SARIF output (e.g. "stripe-secret-test").
+disable_rules = [
+  # "stripe-secret-test",
+  # "entropy",
+]
+
+# Set to false to scan files even if they appear in .gitignore.
+# Default is true — gitignored files (e.g. .env) are skipped.
+respect_gitignore = true
+
+[allowlist]
+# Secrets matching any of these regexes are silently ignored.
+# Useful for known test tokens, documentation examples, or fake credentials.
+# Use sparingly — prefer inline `# keyburn:ignore` comments for one-off suppressions.
+regex = [
+  # "^sk_test_",           # all Stripe test keys
+  # "^EXAMPLE_KEY_",       # placeholder values in docs
+]

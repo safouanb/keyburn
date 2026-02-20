@@ -26,7 +26,13 @@ class ScanConfig:
     max_file_size_bytes: int = 2 * 1024 * 1024
     exclude_dirs: set[str] = field(default_factory=lambda: set(DEFAULT_EXCLUDE_DIRS))
     exclude_globs: list[str] = field(default_factory=list)
+    # Glob patterns matched against relative file paths (e.g. "tests/fixtures/**")
+    exclude_paths: list[str] = field(default_factory=list)
     allowlist_regex: list[re.Pattern[str]] = field(default_factory=list)
+    # Rule IDs to skip entirely (also accepts "entropy" to skip all entropy checks)
+    disable_rules: set[str] = field(default_factory=set)
+    # Whether to skip files listed in .gitignore
+    respect_gitignore: bool = True
 
 
 def _compile_allowlist(patterns: Iterable[str]) -> list[re.Pattern[str]]:
@@ -77,6 +83,18 @@ def load_config(config_path: Path | None) -> ScanConfig:
         ex_globs = scan.get("exclude_globs")
         if isinstance(ex_globs, list):
             cfg.exclude_globs = [str(x) for x in ex_globs if x]
+
+        ex_paths = scan.get("exclude_paths")
+        if isinstance(ex_paths, list):
+            cfg.exclude_paths = [str(x) for x in ex_paths if x]
+
+        disable = scan.get("disable_rules")
+        if isinstance(disable, list):
+            cfg.disable_rules = {str(x) for x in disable if x}
+
+        respect_gi = scan.get("respect_gitignore")
+        if isinstance(respect_gi, bool):
+            cfg.respect_gitignore = respect_gi
 
     allow = data.get("allowlist", {})
     if isinstance(allow, dict):
