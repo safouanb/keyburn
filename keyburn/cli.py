@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .config import load_config
+from .history import scan_history
 from .patterns import Severity
 from .sarif import findings_to_sarif
 from .scanner import (
@@ -52,7 +53,11 @@ def _maybe_write_step_summary(summary_md: str) -> None:
         return
 
 
-def _print_findings_text(findings: list, summ: dict) -> None:
+def _print_findings_text(
+    findings: list,
+    summ: dict,
+    history_lookup: dict[str, dict[str, str]] | None = None,
+) -> None:
     if not findings:
         console.print("[bold green]No secrets found.[/bold green]")
         return
@@ -65,6 +70,14 @@ def _print_findings_text(findings: list, summ: dict) -> None:
             f"  Rule: {f.pattern_id}",
             f"  Match: {f.match_redacted}",
         ]
+        if history_lookup and f.fingerprint in history_lookup:
+            commit = history_lookup[f.fingerprint]
+            body_lines.append(
+                f"  Commit: {commit.get('sha', '')[:8]} ({commit.get('date', '')})"
+            )
+            if commit.get("subject"):
+                body_lines.append(f"  Subject: {commit['subject']}")
+
         if f.remediation:
             body_lines.append("")
             body_lines.append(f"  [bold]How to fix:[/bold] {f.remediation}")
@@ -86,6 +99,25 @@ def _print_findings_text(findings: list, summ: dict) -> None:
         f"[bold yellow]{summ['medium']} medium[/bold yellow], "
         f"{summ['low']} low"
     )
+
+
+def _parse_history_arg(value: str) -> int | None:
+    """
+    Parse --history value.
+    - "all" => None (full history)
+    - positive integer => number of commits
+    """
+    raw = value.strip().lower()
+    if raw == "all":
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise typer.BadParameter("--history must be a positive integer or 'all'") from exc
+
+    if parsed <= 0:
+        raise typer.BadParameter("--history must be a positive integer or 'all'")
+    return parsed
 
 
 def _get_staged_files(repo_root: Path) -> list[Path]:
@@ -152,30 +184,56 @@ def scan(
         "--diff",
         help="Only scan files changed since this git ref (e.g. HEAD~1, main).",
     ),
+    history: str | None = typer.Option(
+        None,
+        "--history",
+        help="Scan git history. Use a commit count (e.g. 50) or 'all'.",
+    ),
     pre_commit: bool = typer.Option(
         False,
         "--pre-commit",
         help="Only scan files staged for commit (git diff --cached).",
     ),
 ) -> None:
+    mode_count = int(pre_commit) + int(diff is not None) + int(history is not None)
+    if mode_count > 1:
+        raise typer.BadParameter("Use only one of --pre-commit, --diff, or --history.")
+
     cfg = load_config(config)
 
-    # Resolve which files to scan
-    only_files: list[Path] | None = None
+    # Resolve scan mode
     repo_root = path.resolve() if path.is_dir() else path.resolve().parent
+    only_files: list[Path] | None = None
+    history_lookup: dict[str, dict[str, str]] = {}
 
-    if pre_commit:
-        only_files = _get_staged_files(repo_root)
-        if not only_files:
-            console.print("[dim]No staged files to scan.[/dim]")
-            raise typer.Exit(code=0)
-    elif diff is not None:
-        only_files = _get_diff_files(repo_root, diff)
-        if not only_files:
-            console.print("[dim]No changed files to scan.[/dim]")
-            raise typer.Exit(code=0)
+    if history is not None:
+        max_commits = _parse_history_arg(history)
+        history_findings = scan_history(repo_root, max_commits=max_commits, cfg=cfg)
+        all_findings = [hf.finding for hf in history_findings]
+        history_lookup = {
+            hf.finding.fingerprint: {
+                "sha": hf.commit.sha,
+                "date": hf.commit.date,
+                "author": hf.commit.author,
+                "subject": hf.commit.subject,
+            }
+            for hf in history_findings
+        }
+    else:
+        if pre_commit:
+            only_files = _get_staged_files(repo_root)
+            if not only_files:
+                console.print("[dim]No staged files to scan.[/dim]")
+                raise typer.Exit(code=0)
+        elif diff is not None:
+            only_files = _get_diff_files(repo_root, diff)
+            if not only_files:
+                console.print("[dim]No changed files to scan.[/dim]")
+                raise typer.Exit(code=0)
 
-    findings = scan_path(path, cfg=cfg, only_files=only_files)
+        all_findings = scan_path(path, cfg=cfg, only_files=only_files)
+
+    findings = all_findings
 
     # Baseline filtering
     known: set[str] = set()
@@ -184,8 +242,7 @@ def scan(
         findings = filter_baseline(findings, known)
 
     if update_baseline and baseline is not None:
-        # Re-load all findings (un-filtered) to write the full baseline
-        all_findings = scan_path(path, cfg=cfg, only_files=only_files)
+        # Write baseline from unfiltered findings in the selected mode.
         save_baseline(all_findings, baseline)
         console.print(
             f"[bold green]Baseline updated:[/bold green] {len(all_findings)} "
@@ -204,15 +261,26 @@ def scan(
         _write_text(out, json.dumps(payload, indent=2))
     elif fmt == "json":
         payload = {"summary": summ, "findings": [f.to_dict() for f in findings]}
+        if history_lookup:
+            payload["history"] = [
+                {
+                    "fingerprint": f.fingerprint,
+                    "commit": history_lookup.get(f.fingerprint, {}),
+                }
+                for f in findings
+            ]
         _write_text(out, json.dumps(payload, indent=2))
     else:
-        _print_findings_text(findings, summ)
+        _print_findings_text(findings, summ, history_lookup=history_lookup or None)
 
         md = (
             "## keyburn\n\n"
             f"- Findings: **{summ['total']}** "
             f"(high={summ['high']}, medium={summ['medium']}, low={summ['low']})\n"
         )
+        if history is not None:
+            hist_label = "all" if _parse_history_arg(history) is None else history
+            md += f"- Mode: git history ({hist_label} commit(s))\n"
         if known:
             md += f"- Suppressed by baseline: {len(known)} known finding(s)\n"
         _maybe_write_step_summary(md)

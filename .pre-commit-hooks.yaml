@@ -1,0 +1,10 @@
+- id: keyburn
+  name: keyburn secret scan
+  language: python
+  entry: keyburn scan
+  args: [--pre-commit, --fail-on, high]
+  pass_filenames: false
+  types: [text]
+  description: >
+    Scan staged files for leaked secrets, API keys, and credentials.
+    Add # keyburn:ignore to suppress a specific line.
