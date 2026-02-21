@@ -103,7 +103,7 @@ keyburn scan . --pre-commit --fail-on high
 **Inline, for a single line:**
 
 ```python
-EXAMPLE_KEY = "sk_live_fake_key_for_docs"  # keyburn:ignore
+EXAMPLE_KEY = "not_a_real_secret_for_docs"  # keyburn:ignore
 ```
 
 **Allowlist by regex in `keyburn.toml`:**

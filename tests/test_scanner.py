@@ -63,7 +63,14 @@ def test_detects_slack_token() -> None:
 
 
 def test_detects_slack_webhook() -> None:
-    url = "https://hooks.slack.com/services/T01234567/B01234567/abcdefghijklmnopqrstuv"
+    url = (
+        "https://hooks.slack.com/services/"
+        + "T01234567"
+        + "/"
+        + "B01234567"
+        + "/"
+        + "abcdefghijklmnopqrstuv"
+    )
     text = f'WEBHOOK = "{url}"'
     findings = scan_text(text=text, rel_path="test.py", enable_entropy=False)
     assert any(f.pattern_id == "slack-webhook" for f in findings)
@@ -129,13 +136,15 @@ def test_detects_sendgrid_key() -> None:
 
 
 def test_detects_postgres_connection_string() -> None:
-    text = 'DATABASE_URL = "postgresql://user:p4ssw0rd@db.example.com:5432/mydb"'
+    uri = "postgresql://" + "user:p4ssw0rd@" + "db.example.com:5432/mydb"
+    text = f'DATABASE_URL = "{uri}"'
     findings = scan_text(text=text, rel_path="test.py", enable_entropy=False)
     assert any(f.pattern_id == "postgres-connection-string" for f in findings)
 
 
 def test_detects_mongodb_connection_string() -> None:
-    text = 'MONGO = "mongodb+srv://admin:secret@cluster0.abc.mongodb.net/db"'
+    uri = "mongodb+srv://" + "admin:secret@" + "cluster0.abc.mongodb.net/db"
+    text = f'MONGO = "{uri}"'
     findings = scan_text(text=text, rel_path="test.py", enable_entropy=False)
     assert any(f.pattern_id == "mongodb-connection-string" for f in findings)
 
@@ -154,7 +163,12 @@ def test_detects_npm_token() -> None:
 
 
 def test_detects_discord_webhook() -> None:
-    url = "https://discord.com/api/webhooks/123456789/abcdef_GHIJKL-mnopqr"
+    url = (
+        "https://discord.com/api/webhooks/"
+        + "123456789"
+        + "/"
+        + "abcdef_GHIJKL-mnopqr"
+    )
     text = f'WEBHOOK = "{url}"'
     findings = scan_text(text=text, rel_path="test.py", enable_entropy=False)
     assert any(f.pattern_id == "discord-webhook" for f in findings)
