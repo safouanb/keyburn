@@ -105,7 +105,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/safouanb/keyburn
-    rev: v0.1.5
+    rev: v0.1.6
     hooks:
       - id: keyburn
 ```
