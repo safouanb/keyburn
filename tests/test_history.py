@@ -37,4 +37,3 @@ index 123..456 100644
 
     assert ("src/app.py", 2, 'secret = "abc123"') in parsed
     assert ("src/app.py", 12, 'another = "xyz"') in parsed
-

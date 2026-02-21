@@ -163,12 +163,7 @@ def test_detects_npm_token() -> None:
 
 
 def test_detects_discord_webhook() -> None:
-    url = (
-        "https://discord.com/api/webhooks/"
-        + "123456789"
-        + "/"
-        + "abcdef_GHIJKL-mnopqr"
-    )
+    url = "https://discord.com/api/webhooks/" + "123456789" + "/" + "abcdef_GHIJKL-mnopqr"
     text = f'WEBHOOK = "{url}"'
     findings = scan_text(text=text, rel_path="test.py", enable_entropy=False)
     assert any(f.pattern_id == "discord-webhook" for f in findings)

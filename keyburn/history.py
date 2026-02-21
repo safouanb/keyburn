@@ -45,9 +45,7 @@ def _list_commits(repo: Path, max_count: int | None) -> list[CommitInfo]:
         parts = line.split("\t", 3)
         if len(parts) < 4:
             continue
-        commits.append(
-            CommitInfo(sha=parts[0], author=parts[1], date=parts[2], subject=parts[3])
-        )
+        commits.append(CommitInfo(sha=parts[0], author=parts[1], date=parts[2], subject=parts[3]))
     return commits
 
 

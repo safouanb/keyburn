@@ -72,9 +72,7 @@ def _print_findings_text(
         ]
         if history_lookup and f.fingerprint in history_lookup:
             commit = history_lookup[f.fingerprint]
-            body_lines.append(
-                f"  Commit: {commit.get('sha', '')[:8]} ({commit.get('date', '')})"
-            )
+            body_lines.append(f"  Commit: {commit.get('sha', '')[:8]} ({commit.get('date', '')})")
             if commit.get("subject"):
                 body_lines.append(f"  Subject: {commit['subject']}")
 
