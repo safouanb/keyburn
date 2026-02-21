@@ -16,6 +16,7 @@ from .config import load_config
 from .history import parse_diff_hunks, scan_history
 from .patterns import Severity
 from .redact import redact
+from .rotate import SUPPORTED_ROTATE_PROVIDERS, RotationPlan, build_rotation_plan
 from .sarif import findings_to_sarif
 from .scanner import (
     filter_baseline,
@@ -87,6 +88,12 @@ def _print_findings_text(
         risk_factors = getattr(f, "risk_factors", ())
         if risk_factors:
             body_lines.append(f"  Signals: {', '.join(risk_factors)}")
+        playbook_title = getattr(f, "playbook_title", "")
+        if playbook_title:
+            body_lines.append(f"  Playbook: {playbook_title}")
+        rotation_stub = getattr(f, "rotation_stub", "")
+        if rotation_stub:
+            body_lines.append(f"  Rotate: {rotation_stub}")
         if history_lookup and f.fingerprint in history_lookup:
             commit = history_lookup[f.fingerprint]
             body_lines.append(f"  Commit: {commit.get('sha', '')[:8]} ({commit.get('date', '')})")
@@ -137,6 +144,40 @@ def _print_verify_text(result: VerificationResult, redacted_secret: str) -> None
             title="[bold]keyburn verify[/bold]",
             title_align="left",
             border_style=status_style,
+            expand=False,
+        )
+    )
+
+
+def _print_rotation_text(plan: RotationPlan) -> None:
+    lines = [
+        f"  Provider: {plan.provider}",
+        f"  Target: {plan.resource}",
+        f"  Goal: {plan.summary}",
+        "",
+        "  Commands:",
+    ]
+
+    for idx, cmd in enumerate(plan.commands, start=1):
+        lines.append(f"    {idx}. {cmd}")
+
+    lines.append("")
+    lines.append("  Verification:")
+    for idx, check in enumerate(plan.checks, start=1):
+        lines.append(f"    {idx}. {check}")
+
+    if plan.notes:
+        lines.append("")
+        lines.append("  Notes:")
+        for idx, note in enumerate(plan.notes, start=1):
+            lines.append(f"    {idx}. {note}")
+
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold]keyburn rotate (stub)[/bold]",
+            title_align="left",
+            border_style="bold cyan",
             expand=False,
         )
     )
@@ -354,6 +395,44 @@ def scan(
         _maybe_write_step_summary(md)
 
     raise typer.Exit(code=1 if should_fail(findings, fail_on=fail_on) else 0)
+
+
+@app.command()
+def rotate(
+    provider: str = typer.Option(
+        ...,
+        "--provider",
+        help="Provider to rotate: aws|github|stripe",
+    ),
+    resource: Optional[str] = typer.Option(
+        None,
+        "--resource",
+        help="Leaked key identifier/label (optional placeholder if omitted).",
+    ),
+    format: str = typer.Option(
+        "text",
+        "--format",
+        help="Output format: text|json",
+        show_default=True,
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
+) -> None:
+    selected = provider.strip().lower()
+    if selected not in SUPPORTED_ROTATE_PROVIDERS:
+        allowed = ", ".join(sorted(SUPPORTED_ROTATE_PROVIDERS))
+        raise typer.BadParameter(f"provider must be one of: {allowed}")
+
+    plan = build_rotation_plan(selected, resource=resource)
+    fmt = format.lower().strip()
+    if fmt not in {"text", "json"}:
+        raise typer.BadParameter("format must be one of: text, json")
+
+    if fmt == "json":
+        _write_text(out, json.dumps(plan.to_dict(), indent=2))
+    else:
+        _print_rotation_text(plan)
+
+    raise typer.Exit(code=0)
 
 
 @app.command()

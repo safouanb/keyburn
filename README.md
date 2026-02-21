@@ -8,6 +8,7 @@ Cursor, Copilot, and Lovable write code fast. Sometimes too fast — hardcoded A
 - **Shannon entropy analysis** — catches secrets that don't match a known pattern
 - **Actionable remediation hints** — tells you exactly how to fix each finding, not just that something's wrong
 - **Provider-aware risk intelligence** — each finding includes provider + risk score + exposure signals
+- **Rotation runbook stubs** — generate one-command incident response plans for AWS/GitHub/Stripe
 - **Framework-aware** — knows that `NEXT_PUBLIC_SECRET_KEY` is exposed to the browser, that Supabase `service_role` keys bypass RLS, etc.
 - **Zero noise escape hatches** — `# keyburn:ignore`, allowlists, baselines, per-path excludes
 - **CI-native** — text/JSON/SARIF output, GitHub code scanning integration, fail threshold per severity
@@ -60,6 +61,21 @@ keyburn verify --from-env GROQ_API_KEY --provider groq
 
 # fail CI if token appears active
 keyburn verify --from-env STRIPE_SECRET_KEY --provider stripe --fail-on-valid
+```
+
+## Rotation Stubs
+
+`keyburn rotate` prints provider-specific rotation runbooks for fast incident response.
+
+```bash
+# Build an AWS key rotation plan
+keyburn rotate --provider aws --resource AKIA1234567890ABCDEF
+
+# Build a GitHub token rotation plan
+keyburn rotate --provider github --resource leaked-pat
+
+# Build a Stripe key rotation plan (supports JSON output)
+keyburn rotate --provider stripe --format json
 ```
 
 ## GitHub Action
@@ -271,6 +287,7 @@ CI can run this weekly via `.github/workflows/adoption-loop.yml`.
 - Key verification currently supports OpenAI, Anthropic, Groq, GitHub, and Stripe.
 - Verification is a live HTTP check and can return `unknown` during rate limits/outages.
 - A `valid` check means \"accepted by provider now\"; it does not measure scope or blast radius.
+- `keyburn rotate` currently emits manual/CLI runbook stubs and does not auto-execute rotation.
 - `.gitignore` matching is intentionally lightweight and may differ from full git pathspec semantics.
 
 ## Open-core

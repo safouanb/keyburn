@@ -11,6 +11,7 @@ from pathlib import Path
 from .config import ScanConfig
 from .entropy import scan_line_entropy
 from .patterns import PATTERNS, SecretPattern, Severity
+from .playbooks import build_incident_playbook
 from .redact import redact, redact_in_line
 from .verify import infer_provider as infer_provider_from_token
 
@@ -87,6 +88,10 @@ class Finding:
     provider: str = "unknown"
     risk_score: int = 0
     risk_factors: tuple[str, ...] = field(default_factory=tuple)
+    playbook_id: str = ""
+    playbook_title: str = ""
+    playbook_steps: tuple[str, ...] = field(default_factory=tuple)
+    rotation_stub: str = ""
 
     def to_dict(self) -> dict:
         d = {
@@ -105,6 +110,14 @@ class Finding:
         }
         if self.risk_factors:
             d["risk_factors"] = list(self.risk_factors)
+        if self.playbook_id:
+            d["playbook_id"] = self.playbook_id
+        if self.playbook_title:
+            d["playbook_title"] = self.playbook_title
+        if self.playbook_steps:
+            d["playbook_steps"] = list(self.playbook_steps)
+        if self.rotation_stub:
+            d["rotation_stub"] = self.rotation_stub
         if self.remediation:
             d["remediation"] = self.remediation
         return d
@@ -251,6 +264,13 @@ def _scan_line(
                 secret=secret,
                 pattern_id=pat.id,
             )
+            provider = _infer_provider(pattern=pat, secret=secret, line=line)
+            playbook = build_incident_playbook(
+                provider,
+                severity=pat.severity,
+                pattern_id=pat.id,
+                risk_score=risk_score,
+            )
 
             findings.append(
                 Finding(
@@ -265,9 +285,13 @@ def _scan_line(
                     message=f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real.",
                     line_text=redact_in_line(line, start, end),
                     remediation=pat.remediation,
-                    provider=_infer_provider(pattern=pat, secret=secret, line=line),
+                    provider=provider,
                     risk_score=risk_score,
                     risk_factors=risk_factors,
+                    playbook_id=playbook.id,
+                    playbook_title=playbook.title,
+                    playbook_steps=playbook.steps,
+                    rotation_stub=playbook.rotation_stub,
                 )
             )
 
@@ -287,6 +311,13 @@ def _scan_line(
                 line=line,
                 secret=ef.value,
                 pattern_id="entropy",
+            )
+            provider = _infer_provider(pattern=None, secret=ef.value, line=line)
+            playbook = build_incident_playbook(
+                provider,
+                severity=Severity.medium,
+                pattern_id="entropy",
+                risk_score=risk_score,
             )
 
             findings.append(
@@ -312,9 +343,13 @@ def _scan_line(
                         f"If '{ef.var_name}' holds a real secret, move it to an "
                         "environment variable or .env file. Add .env to .gitignore."
                     ),
-                    provider=_infer_provider(pattern=None, secret=ef.value, line=line),
+                    provider=provider,
                     risk_score=risk_score,
                     risk_factors=risk_factors,
+                    playbook_id=playbook.id,
+                    playbook_title=playbook.title,
+                    playbook_steps=playbook.steps,
+                    rotation_stub=playbook.rotation_stub,
                 )
             )
 

@@ -235,6 +235,9 @@ def test_finding_includes_provider_and_risk_score() -> None:
     f = next(f for f in findings if f.pattern_id == "stripe-secret-live")
     assert f.provider == "stripe"
     assert f.risk_score >= 80
+    assert f.playbook_id == "stripe-key-leak"
+    assert "Stripe Key Leak Response" in f.playbook_title
+    assert "keyburn rotate --provider stripe" in f.rotation_stub
 
 
 def test_client_exposed_variable_gets_risk_boost() -> None:
@@ -251,6 +254,18 @@ def test_test_credential_gets_lower_risk_score() -> None:
     f = next(f for f in findings if f.pattern_id == "stripe-secret-test")
     assert "test-credential" in f.risk_factors
     assert f.risk_score <= 40
+
+
+def test_scanner_to_dict_includes_playbook_fields() -> None:
+    key = "sk_live_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    findings = scan_text(text=f"STRIPE_KEY={key}", rel_path="payments.py", enable_entropy=False)
+    f = next(f for f in findings if f.pattern_id == "stripe-secret-live")
+    payload = f.to_dict()
+    assert payload["provider"] == "stripe"
+    assert payload["risk_score"] >= 80
+    assert payload["playbook_id"] == "stripe-key-leak"
+    assert "playbook_steps" in payload
+    assert "rotation_stub" in payload
 
 
 # ---------------------------------------------------------------------------
