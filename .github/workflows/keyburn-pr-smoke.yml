@@ -1,0 +1,22 @@
+name: keyburn-pr-smoke
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smoke-comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: keyburn PR comment smoke test
+        uses: ./
+        with:
+          path: tests/smoke_pr
+          fail_on: high
+          upload_sarif: "false"
+          comment_pr: "true"
