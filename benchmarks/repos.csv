@@ -1,0 +1,7 @@
+name,url,expected_max_findings
+requests,https://github.com/psf/requests.git,0
+flask,https://github.com/pallets/flask.git,0
+httpx,https://github.com/encode/httpx.git,0
+fastapi,https://github.com/fastapi/fastapi.git,0
+pydantic,https://github.com/pydantic/pydantic.git,0
+express,https://github.com/expressjs/express.git,0

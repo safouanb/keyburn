@@ -46,18 +46,19 @@ Add this to any workflow — it scans on every push/PR and uploads findings to G
 
 ```yaml
 - name: Scan for secrets
-  uses: safouanb/keyburn@v0.1.0
+  uses: safouanb/keyburn@v0
 ```
 
 Or with options:
 
 ```yaml
 - name: Scan for secrets
-  uses: safouanb/keyburn@v0.1.0
+  uses: safouanb/keyburn@v0
   with:
     fail_on: high          # low | medium | high (default: high)
     format: sarif          # text | json | sarif (default: sarif)
     upload_sarif: "true"   # upload to GitHub code scanning (default: true)
+    comment_pr: "true"     # sticky PR comment summary (default: false)
 ```
 
 Full workflow example:
@@ -72,11 +73,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       security-events: write  # required for SARIF upload
+      pull-requests: write    # required if comment_pr=true
     steps:
       - uses: actions/checkout@v4
-      - uses: safouanb/keyburn@v0.1.0
+      - uses: safouanb/keyburn@v0
         with:
           fail_on: high
+          comment_pr: "true"
 ```
 
 ## Pre-commit hook
@@ -210,6 +213,21 @@ Scan the last N commits for secrets that were added then "deleted":
 keyburn scan --history 50    # last 50 commits
 keyburn scan --history all   # full history (slow on large repos)
 ```
+
+## Precision benchmark
+
+Track scanner noise over time against real OSS repositories:
+
+```bash
+python scripts/benchmark_precision.py
+```
+
+Results are written to:
+
+- `benchmarks/results/latest.json`
+- `benchmarks/results/latest.md`
+
+CI can run this weekly via `.github/workflows/precision-benchmark.yml`.
 
 ## Open-core
 
