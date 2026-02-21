@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from urllib import error, request
 
-SUPPORTED_PROVIDERS = {"openai", "github", "stripe"}
+SUPPORTED_PROVIDERS = {"openai", "github", "stripe", "anthropic", "groq"}
 _USER_AGENT = "keyburn-verify/0.1"
 
 
@@ -23,6 +23,12 @@ class VerificationResult:
 
 def infer_provider(secret: str) -> str | None:
     value = secret.strip()
+
+    if value.startswith("sk-ant-"):
+        return "anthropic"
+
+    if value.startswith("gsk_"):
+        return "groq"
 
     if value.startswith(("sk_live_", "sk_test_", "rk_live_")):
         return "stripe"
@@ -140,6 +146,133 @@ def _verify_openai(secret: str, timeout: float) -> VerificationResult:
         confidence=40,
         priority="medium",
         reason=f"OpenAI returned HTTP {status}.",
+        http_status=status,
+    )
+
+
+def _verify_anthropic(secret: str, timeout: float) -> VerificationResult:
+    headers = {
+        "x-api-key": secret,
+        "anthropic-version": "2023-06-01",
+        "Accept": "application/json",
+        "User-Agent": _USER_AGENT,
+    }
+
+    try:
+        status, body = _request(
+            "https://api.anthropic.com/v1/models",
+            headers=headers,
+            timeout=timeout,
+        )
+    except RuntimeError as exc:
+        return VerificationResult(
+            provider="anthropic",
+            status="error",
+            confidence=25,
+            priority="medium",
+            reason=f"Network error while verifying Anthropic key: {exc}",
+        )
+
+    if status == 200:
+        return VerificationResult(
+            provider="anthropic",
+            status="valid",
+            confidence=95,
+            priority=_valid_priority("anthropic", secret),
+            reason="Anthropic accepted the key.",
+            http_status=status,
+        )
+
+    if status in {401, 403}:
+        msg = _extract_message(body) or "Anthropic rejected the key."
+        return VerificationResult(
+            provider="anthropic",
+            status="invalid",
+            confidence=95,
+            priority="low",
+            reason=msg,
+            http_status=status,
+        )
+
+    if status == 429:
+        return VerificationResult(
+            provider="anthropic",
+            status="unknown",
+            confidence=60,
+            priority="medium",
+            reason="Anthropic rate-limited the verification request.",
+            http_status=status,
+        )
+
+    return VerificationResult(
+        provider="anthropic",
+        status="unknown",
+        confidence=40,
+        priority="medium",
+        reason=f"Anthropic returned HTTP {status}.",
+        http_status=status,
+    )
+
+
+def _verify_groq(secret: str, timeout: float) -> VerificationResult:
+    headers = {
+        "Authorization": f"Bearer {secret}",
+        "Accept": "application/json",
+        "User-Agent": _USER_AGENT,
+    }
+
+    try:
+        status, body = _request(
+            "https://api.groq.com/openai/v1/models",
+            headers=headers,
+            timeout=timeout,
+        )
+    except RuntimeError as exc:
+        return VerificationResult(
+            provider="groq",
+            status="error",
+            confidence=25,
+            priority="medium",
+            reason=f"Network error while verifying Groq key: {exc}",
+        )
+
+    if status == 200:
+        return VerificationResult(
+            provider="groq",
+            status="valid",
+            confidence=95,
+            priority=_valid_priority("groq", secret),
+            reason="Groq accepted the key.",
+            http_status=status,
+        )
+
+    if status in {401, 403}:
+        msg = _extract_message(body) or "Groq rejected the key."
+        return VerificationResult(
+            provider="groq",
+            status="invalid",
+            confidence=95,
+            priority="low",
+            reason=msg,
+            http_status=status,
+        )
+
+    if status == 429:
+        return VerificationResult(
+            provider="groq",
+            status="unknown",
+            confidence=60,
+            priority="medium",
+            reason="Groq rate-limited the verification request.",
+            http_status=status,
+        )
+
+    return VerificationResult(
+        provider="groq",
+        status="unknown",
+        confidence=40,
+        priority="medium",
+        reason=f"Groq returned HTTP {status}.",
         http_status=status,
     )
 
@@ -276,7 +409,8 @@ def verify_secret(
             confidence=0,
             priority="low",
             reason=(
-                f"Unsupported provider '{selected}'. Use one of: auto, openai, github, stripe."
+                "Unsupported provider "
+                f"'{selected}'. Use one of: auto, anthropic, github, groq, openai, stripe."
             ),
         )
 
@@ -294,6 +428,10 @@ def verify_secret(
 
     if selected == "openai":
         return _verify_openai(value, timeout)
+    if selected == "anthropic":
+        return _verify_anthropic(value, timeout)
+    if selected == "groq":
+        return _verify_groq(value, timeout)
     if selected == "github":
         return _verify_github(value, timeout)
     if selected == "stripe":

@@ -7,6 +7,7 @@ Cursor, Copilot, and Lovable write code fast. Sometimes too fast — hardcoded A
 - **57 detection patterns** — AWS, OpenAI, Anthropic, Stripe, Supabase, GitHub, Slack, and more
 - **Shannon entropy analysis** — catches secrets that don't match a known pattern
 - **Actionable remediation hints** — tells you exactly how to fix each finding, not just that something's wrong
+- **Provider-aware risk intelligence** — each finding includes provider + risk score + exposure signals
 - **Framework-aware** — knows that `NEXT_PUBLIC_SECRET_KEY` is exposed to the browser, that Supabase `service_role` keys bypass RLS, etc.
 - **Zero noise escape hatches** — `# keyburn:ignore`, allowlists, baselines, per-path excludes
 - **CI-native** — text/JSON/SARIF output, GitHub code scanning integration, fail threshold per severity
@@ -44,7 +45,7 @@ keyburn scan . --format sarif --out keyburn.sarif
 
 `keyburn verify` checks whether a detected token is still active for selected providers.
 
-Supported providers (current): `openai`, `github`, `stripe`.
+Supported providers (current): `openai`, `anthropic`, `groq`, `github`, `stripe`.
 
 ```bash
 # safest path: load from env var (avoid shell history leaks)
@@ -52,6 +53,10 @@ keyburn verify --from-env OPENAI_API_KEY --provider openai
 
 # auto-infer provider from token format
 keyburn verify --from-env GITHUB_TOKEN --provider auto
+
+# verify Anthropic/Groq keys explicitly
+keyburn verify --from-env ANTHROPIC_API_KEY --provider anthropic
+keyburn verify --from-env GROQ_API_KEY --provider groq
 
 # fail CI if token appears active
 keyburn verify --from-env STRIPE_SECRET_KEY --provider stripe --fail-on-valid
@@ -263,7 +268,7 @@ CI can run this weekly via `.github/workflows/adoption-loop.yml`.
 
 ## Known limitations
 
-- Key verification currently supports only OpenAI, GitHub, and Stripe.
+- Key verification currently supports OpenAI, Anthropic, Groq, GitHub, and Stripe.
 - Verification is a live HTTP check and can return `unknown` during rate limits/outages.
 - A `valid` check means \"accepted by provider now\"; it does not measure scope or blast radius.
 - `.gitignore` matching is intentionally lightweight and may differ from full git pathspec semantics.

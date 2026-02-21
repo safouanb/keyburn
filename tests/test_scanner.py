@@ -225,6 +225,35 @@ def test_remediation_in_to_dict() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Risk intelligence tests
+# ---------------------------------------------------------------------------
+
+
+def test_finding_includes_provider_and_risk_score() -> None:
+    key = "sk_live_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    findings = scan_text(text=f"STRIPE_KEY={key}", rel_path="payments.py", enable_entropy=False)
+    f = next(f for f in findings if f.pattern_id == "stripe-secret-live")
+    assert f.provider == "stripe"
+    assert f.risk_score >= 80
+
+
+def test_client_exposed_variable_gets_risk_boost() -> None:
+    text = 'NEXT_PUBLIC_SECRET_KEY = "my_super_secret_value_1234"'
+    findings = scan_text(text=text, rel_path="apps/web/src/env.ts", enable_entropy=False)
+    f = next(f for f in findings if f.pattern_id == "nextjs-public-secret")
+    assert "client-exposed-variable" in f.risk_factors
+    assert f.risk_score >= 95
+
+
+def test_test_credential_gets_lower_risk_score() -> None:
+    key = "sk_test_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    findings = scan_text(text=f"STRIPE_KEY={key}", rel_path="payments.py", enable_entropy=False)
+    f = next(f for f in findings if f.pattern_id == "stripe-secret-test")
+    assert "test-credential" in f.risk_factors
+    assert f.risk_score <= 40
+
+
+# ---------------------------------------------------------------------------
 # False positive tests (must NOT match)
 # ---------------------------------------------------------------------------
 

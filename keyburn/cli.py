@@ -80,8 +80,13 @@ def _print_findings_text(
         body_lines = [
             f"  File: {f.path}:{f.line}:{f.column}",
             f"  Rule: {f.pattern_id}",
+            f"  Provider: {getattr(f, 'provider', 'unknown')}",
+            f"  Risk: {getattr(f, 'risk_score', 0)}/100",
             f"  Match: {f.match_redacted}",
         ]
+        risk_factors = getattr(f, "risk_factors", ())
+        if risk_factors:
+            body_lines.append(f"  Signals: {', '.join(risk_factors)}")
         if history_lookup and f.fingerprint in history_lookup:
             commit = history_lookup[f.fingerprint]
             body_lines.append(f"  Commit: {commit.get('sha', '')[:8]} ({commit.get('date', '')})")
@@ -360,7 +365,7 @@ def verify(
     provider: str = typer.Option(
         "auto",
         "--provider",
-        help="Provider to verify against: auto|openai|github|stripe",
+        help="Provider to verify against: auto|anthropic|github|groq|openai|stripe",
         show_default=True,
     ),
     from_env: Optional[str] = typer.Option(

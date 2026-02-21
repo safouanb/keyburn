@@ -3,17 +3,72 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import ScanConfig
 from .entropy import scan_line_entropy
 from .patterns import PATTERNS, SecretPattern, Severity
 from .redact import redact, redact_in_line
+from .verify import infer_provider as infer_provider_from_token
 
 # Inline suppression comment — any of these on a line silence all findings for it.
 _IGNORE_MARKERS = ("# keyburn:ignore", "# noqa: keyburn", "# kb:ignore")
+_BASE_RISK_BY_SEVERITY = {
+    Severity.low: 25,
+    Severity.medium: 55,
+    Severity.high: 80,
+}
+_PROVIDER_PREFIX_MAP = {
+    "aws-": "aws",
+    "github-": "github",
+    "stripe-": "stripe",
+    "openai-": "openai",
+    "anthropic-": "anthropic",
+    "groq-": "groq",
+    "huggingface-": "huggingface",
+    "replicate-": "replicate",
+    "cohere-": "cohere",
+    "supabase-": "supabase",
+    "twilio-": "twilio",
+    "sendgrid-": "sendgrid",
+    "mailgun-": "mailgun",
+    "datadog-": "datadog",
+    "shopify-": "shopify",
+    "clerk-": "clerk",
+    "auth0-": "auth0",
+    "vercel-": "vercel",
+    "netlify-": "netlify",
+    "doppler-": "doppler",
+}
+_CLIENT_VAR_PREFIXES = ("NEXT_PUBLIC_", "VITE_", "REACT_APP_", "PUBLIC_")
+_FRONTEND_PATH_HINTS = (
+    "/frontend/",
+    "/client/",
+    "/public/",
+    "/web/",
+    "/apps/web/",
+    "/src/ui/",
+    "/src/client/",
+)
+_CI_PATH_HINTS = (
+    "/.github/workflows/",
+    "/.circleci/",
+    "/.buildkite/",
+    "gitlab-ci",
+    "jenkinsfile",
+    "azure-pipelines",
+    "docker-compose",
+)
+_DOC_SUFFIXES = (".md", ".rst", ".adoc", ".txt")
+_SECRETISH_NAME_RE = re.compile(
+    r"(secret|token|api[_-]?key|password|private[_-]?key|connection[_-]?string)",
+    flags=re.IGNORECASE,
+)
+_PROD_HINT_RE = re.compile(r"\b(prod|production|live)\b", flags=re.IGNORECASE)
+_TEST_HINT_RE = re.compile(r"\b(test|sandbox|example|dummy|sample)\b", flags=re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -29,6 +84,9 @@ class Finding:
     message: str
     line_text: str
     remediation: str = ""
+    provider: str = "unknown"
+    risk_score: int = 0
+    risk_factors: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
         d = {
@@ -42,7 +100,11 @@ class Finding:
             "fingerprint": self.fingerprint,
             "message": self.message,
             "line_text": self.line_text,
+            "provider": self.provider,
+            "risk_score": self.risk_score,
         }
+        if self.risk_factors:
+            d["risk_factors"] = list(self.risk_factors)
         if self.remediation:
             d["remediation"] = self.remediation
         return d
@@ -69,6 +131,84 @@ def _line_is_ignored(line: str) -> bool:
     """Return True if the line contains an inline suppression comment."""
     lower = line.lower()
     return any(marker in lower for marker in _IGNORE_MARKERS)
+
+
+def _infer_provider(*, pattern: SecretPattern | None, secret: str, line: str) -> str:
+    inferred = infer_provider_from_token(secret)
+    if inferred:
+        return inferred
+
+    if pattern is not None:
+        pid = pattern.id.lower()
+        for prefix, provider in _PROVIDER_PREFIX_MAP.items():
+            if pid.startswith(prefix):
+                return provider
+
+        category = pattern.category.lower()
+        if category and category not in {"generic", "framework", "infra"}:
+            return category
+
+    upper = line.upper()
+    if "OPENAI" in upper:
+        return "openai"
+    if "ANTHROPIC" in upper or "CLAUDE" in upper:
+        return "anthropic"
+    if "GROQ" in upper:
+        return "groq"
+    if "GITHUB" in upper:
+        return "github"
+    if "STRIPE" in upper:
+        return "stripe"
+    if "AWS" in upper:
+        return "aws"
+
+    return "unknown"
+
+
+def _compute_risk_intelligence(
+    *,
+    severity: Severity,
+    rel_path: str,
+    line: str,
+    secret: str,
+    pattern_id: str,
+) -> tuple[int, tuple[str, ...]]:
+    score = _BASE_RISK_BY_SEVERITY[severity]
+    factors: list[str] = []
+
+    norm_path = rel_path.replace(os.sep, "/").lower()
+    upper_line = line.upper()
+
+    if any(prefix in upper_line for prefix in _CLIENT_VAR_PREFIXES):
+        score += 25
+        factors.append("client-exposed-variable")
+
+    if any(hint in norm_path for hint in _FRONTEND_PATH_HINTS) and _SECRETISH_NAME_RE.search(line):
+        score += 10
+        factors.append("frontend-source")
+
+    if any(hint in norm_path for hint in _CI_PATH_HINTS):
+        score += 10
+        factors.append("ci-pipeline-context")
+
+    if norm_path.endswith(_DOC_SUFFIXES):
+        score += 5
+        factors.append("documentation-context")
+
+    if _PROD_HINT_RE.search(line) or "/prod/" in norm_path:
+        score += 10
+        factors.append("production-indicator")
+
+    if "test" in pattern_id or _TEST_HINT_RE.search(secret):
+        score -= 20
+        factors.append("test-credential")
+
+    if score < 0:
+        score = 0
+    if score > 100:
+        score = 100
+
+    return score, tuple(dict.fromkeys(factors))
 
 
 def _scan_line(
@@ -104,6 +244,13 @@ def _scan_line(
             if fingerprint in seen_fingerprints:
                 continue
             seen_fingerprints.add(fingerprint)
+            risk_score, risk_factors = _compute_risk_intelligence(
+                severity=pat.severity,
+                rel_path=rel_path,
+                line=line,
+                secret=secret,
+                pattern_id=pat.id,
+            )
 
             findings.append(
                 Finding(
@@ -118,6 +265,9 @@ def _scan_line(
                     message=f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real.",
                     line_text=redact_in_line(line, start, end),
                     remediation=pat.remediation,
+                    provider=_infer_provider(pattern=pat, secret=secret, line=line),
+                    risk_score=risk_score,
+                    risk_factors=risk_factors,
                 )
             )
 
@@ -131,6 +281,13 @@ def _scan_line(
             if fingerprint in seen_fingerprints:
                 continue
             seen_fingerprints.add(fingerprint)
+            risk_score, risk_factors = _compute_risk_intelligence(
+                severity=Severity.medium,
+                rel_path=rel_path,
+                line=line,
+                secret=ef.value,
+                pattern_id="entropy",
+            )
 
             findings.append(
                 Finding(
@@ -155,6 +312,9 @@ def _scan_line(
                         f"If '{ef.var_name}' holds a real secret, move it to an "
                         "environment variable or .env file. Add .env to .gitignore."
                     ),
+                    provider=_infer_provider(pattern=None, secret=ef.value, line=line),
+                    risk_score=risk_score,
+                    risk_factors=risk_factors,
                 )
             )
 
