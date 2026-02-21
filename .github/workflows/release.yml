@@ -26,13 +26,13 @@ jobs:
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(python - <<'PY'
-import tomllib
-from pathlib import Path
+          import tomllib
+          from pathlib import Path
 
-pyproject = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
-print(pyproject['project']['version'])
-PY
-)"
+          pyproject = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
+          print(pyproject['project']['version'])
+          PY
+          )"
 
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "Tag version ($TAG_VERSION) does not match pyproject version ($PKG_VERSION)." >&2
