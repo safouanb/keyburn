@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+# ruff: noqa: UP045
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -13,6 +15,7 @@ from rich.panel import Panel
 from .config import load_config
 from .history import scan_history
 from .patterns import Severity
+from .redact import redact
 from .sarif import findings_to_sarif
 from .scanner import (
     filter_baseline,
@@ -22,6 +25,7 @@ from .scanner import (
     should_fail,
     summarize,
 )
+from .verify import SUPPORTED_PROVIDERS, VerificationResult, verify_secret
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -30,6 +34,13 @@ _SEVERITY_STYLE = {
     "high": "bold red",
     "medium": "bold yellow",
     "low": "dim",
+}
+
+_VERIFY_STATUS_STYLE = {
+    "valid": "bold red",
+    "invalid": "bold green",
+    "unknown": "bold yellow",
+    "error": "bold yellow",
 }
 
 
@@ -99,6 +110,32 @@ def _print_findings_text(
     )
 
 
+def _print_verify_text(result: VerificationResult, redacted_secret: str) -> None:
+    status_style = _VERIFY_STATUS_STYLE.get(result.status, "bold")
+    status_label = f"[{status_style}]{result.status.upper()}[/{status_style}]"
+
+    body_lines = [
+        f"  Provider: {result.provider}",
+        f"  Status: {status_label}",
+        f"  Confidence: {result.confidence}/100",
+        f"  Priority: {result.priority}",
+        f"  Secret: {redacted_secret}",
+        f"  Reason: {result.reason}",
+    ]
+    if result.http_status is not None:
+        body_lines.insert(5, f"  HTTP: {result.http_status}")
+
+    console.print(
+        Panel(
+            "\n".join(body_lines),
+            title="[bold]keyburn verify[/bold]",
+            title_align="left",
+            border_style=status_style,
+            expand=False,
+        )
+    )
+
+
 def _parse_history_arg(value: str) -> int | None:
     """
     Parse --history value.
@@ -161,13 +198,13 @@ def _get_diff_files(repo_root: Path, base_ref: str) -> list[Path]:
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), exists=True),
-    config: Path | None = typer.Option(None, "--config", help="Path to keyburn.toml"),
+    config: Optional[Path] = typer.Option(None, "--config", help="Path to keyburn.toml"),
     format: str = typer.Option(
         "text", "--format", help="Output format: text|json|sarif", show_default=True
     ),
-    out: Path | None = typer.Option(None, "--out", help="Write output to a file"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
     fail_on: Severity = typer.Option(Severity.high, "--fail-on", help="CI fail threshold"),
-    baseline: Path | None = typer.Option(
+    baseline: Optional[Path] = typer.Option(
         None,
         "--baseline",
         help="Baseline file of known findings to ignore (JSON).",
@@ -177,12 +214,12 @@ def scan(
         "--update-baseline",
         help="Write current findings to the baseline file and exit 0.",
     ),
-    diff: str | None = typer.Option(
+    diff: Optional[str] = typer.Option(
         None,
         "--diff",
         help="Only scan files changed since this git ref (e.g. HEAD~1, main).",
     ),
-    history: str | None = typer.Option(
+    history: Optional[str] = typer.Option(
         None,
         "--history",
         help="Scan git history. Use a commit count (e.g. 50) or 'all'.",
@@ -284,3 +321,77 @@ def scan(
         _maybe_write_step_summary(md)
 
     raise typer.Exit(code=1 if should_fail(findings, fail_on=fail_on) else 0)
+
+
+@app.command()
+def verify(
+    secret: Optional[str] = typer.Argument(
+        None,
+        help="Secret/token value to verify. Prefer --from-env to avoid shell history leaks.",
+    ),
+    provider: str = typer.Option(
+        "auto",
+        "--provider",
+        help="Provider to verify against: auto|openai|github|stripe",
+        show_default=True,
+    ),
+    from_env: Optional[str] = typer.Option(
+        None,
+        "--from-env",
+        help="Read the secret value from this environment variable.",
+    ),
+    timeout: float = typer.Option(
+        6.0,
+        "--timeout",
+        min=1.0,
+        max=30.0,
+        help="HTTP timeout in seconds.",
+        show_default=True,
+    ),
+    format: str = typer.Option(
+        "text",
+        "--format",
+        help="Output format: text|json",
+        show_default=True,
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
+    fail_on_valid: bool = typer.Option(
+        False,
+        "--fail-on-valid",
+        help="Exit non-zero if the secret appears valid.",
+    ),
+) -> None:
+    if secret and from_env:
+        raise typer.BadParameter("Use either a secret argument or --from-env, not both.")
+
+    value = secret
+    if from_env:
+        value = os.environ.get(from_env)
+        if not value:
+            raise typer.BadParameter(f"Environment variable '{from_env}' is empty or missing.")
+
+    if not value:
+        raise typer.BadParameter("Provide a secret argument or --from-env VAR.")
+
+    selected_provider = provider.strip().lower()
+    allowed = SUPPORTED_PROVIDERS | {"auto"}
+    if selected_provider not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise typer.BadParameter(f"provider must be one of: {allowed_text}")
+
+    result = verify_secret(value, provider=selected_provider, timeout=timeout)
+    redacted_secret = redact(value)
+
+    fmt = format.lower().strip()
+    if fmt not in {"text", "json"}:
+        raise typer.BadParameter("format must be one of: text, json")
+
+    if fmt == "json":
+        payload = result.to_dict()
+        payload["secret_redacted"] = redacted_secret
+        _write_text(out, json.dumps(payload, indent=2))
+    else:
+        _print_verify_text(result, redacted_secret)
+
+    exit_code = 1 if (fail_on_valid and result.status == "valid") else 0
+    raise typer.Exit(code=exit_code)

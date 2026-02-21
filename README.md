@@ -40,6 +40,23 @@ keyburn scan . --pre-commit
 keyburn scan . --format sarif --out keyburn.sarif
 ```
 
+## Verify likely-live keys
+
+`keyburn verify` checks whether a detected token is still active for selected providers.
+
+Supported providers (current): `openai`, `github`, `stripe`.
+
+```bash
+# safest path: load from env var (avoid shell history leaks)
+keyburn verify --from-env OPENAI_API_KEY --provider openai
+
+# auto-infer provider from token format
+keyburn verify --from-env GITHUB_TOKEN --provider auto
+
+# fail CI if token appears active
+keyburn verify --from-env STRIPE_SECRET_KEY --provider stripe --fail-on-valid
+```
+
 ## GitHub Action
 
 Add this to any workflow — it scans on every push/PR and uploads findings to GitHub code scanning:
@@ -88,7 +105,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/safouanb/keyburn
-    rev: v0.1.4
+    rev: v0.1.5
     hooks:
       - id: keyburn
 ```
@@ -228,6 +245,28 @@ Results are written to:
 - `benchmarks/results/latest.md`
 
 CI can run this weekly via `.github/workflows/precision-benchmark.yml`.
+
+## Adoption loop
+
+Track external adoption/noise metrics across real open-source repositories:
+
+```bash
+python scripts/adoption_loop.py
+```
+
+Results are written to:
+
+- `adoption/results/latest.json`
+- `adoption/results/latest.md`
+
+CI can run this weekly via `.github/workflows/adoption-loop.yml`.
+
+## Known limitations
+
+- Key verification currently supports only OpenAI, GitHub, and Stripe.
+- Verification is a live HTTP check and can return `unknown` during rate limits/outages.
+- A `valid` check means \"accepted by provider now\"; it does not measure scope or blast radius.
+- `.gitignore` matching is intentionally lightweight and may differ from full git pathspec semantics.
 
 ## Open-core
 

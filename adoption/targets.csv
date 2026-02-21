@@ -1,0 +1,11 @@
+name,url,branch
+requests,https://github.com/psf/requests.git,main
+flask,https://github.com/pallets/flask.git,main
+httpx,https://github.com/encode/httpx.git,master
+fastapi,https://github.com/fastapi/fastapi.git,master
+pydantic,https://github.com/pydantic/pydantic.git,main
+django,https://github.com/django/django.git,main
+numpy,https://github.com/numpy/numpy.git,main
+click,https://github.com/pallets/click.git,main
+express,https://github.com/expressjs/express.git,master
+nextjs,https://github.com/vercel/next.js.git,canary

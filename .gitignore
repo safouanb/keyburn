@@ -17,6 +17,9 @@ dist/
 .benchmarks/
 benchmarks/results/latest.json
 benchmarks/results/latest.md
+.adoption/
+adoption/results/latest.json
+adoption/results/latest.md
 
 # Test / lint
 .pytest_cache/
