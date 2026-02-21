@@ -54,7 +54,7 @@ def _get_commit_diff(repo: Path, sha: str) -> str:
     return _git("show", "--unified=0", sha, cwd=repo)
 
 
-def _parse_diff_hunks(diff: str) -> list[tuple[str, int, str]]:
+def parse_diff_hunks(diff: str) -> list[tuple[str, int, str]]:
     """
     Parse a unified diff and return (filepath, line_no, added_line) tuples
     for every line that was ADDED by the commit (lines starting with '+',
@@ -90,6 +90,11 @@ def _parse_diff_hunks(diff: str) -> list[tuple[str, int, str]]:
             current_line += 1
 
     return results
+
+
+def _parse_diff_hunks(diff: str) -> list[tuple[str, int, str]]:
+    """Backward-compatible alias used by older tests/imports."""
+    return parse_diff_hunks(diff)
 
 
 @dataclass(frozen=True)
@@ -131,7 +136,7 @@ def scan_history(
 
     for commit in commits:
         diff = _get_commit_diff(repo, commit.sha)
-        hunks = _parse_diff_hunks(diff)
+        hunks = parse_diff_hunks(diff)
 
         # Group added lines by file path, preserving line numbers
         files: dict[str, list[tuple[int, str]]] = {}

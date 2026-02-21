@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 from collections.abc import Iterable
@@ -70,6 +71,96 @@ def _line_is_ignored(line: str) -> bool:
     return any(marker in lower for marker in _IGNORE_MARKERS)
 
 
+def _scan_line(
+    *,
+    line: str,
+    line_no: int,
+    rel_path: str,
+    patterns: Iterable[SecretPattern],
+    cfg: ScanConfig,
+    enable_entropy: bool,
+    seen_fingerprints: set[str],
+) -> list[Finding]:
+    findings: list[Finding] = []
+
+    # Inline suppression — skip entire line
+    if _line_is_ignored(line):
+        return findings
+
+    # Pattern-based detection
+    for pat in patterns:
+        if pat.id in cfg.disable_rules:
+            continue
+
+        for m in pat.regex.finditer(line):
+            secret = m.group(pat.secret_group) if pat.secret_group else m.group(0)
+            start = m.start(pat.secret_group) if pat.secret_group else m.start(0)
+            end = m.end(pat.secret_group) if pat.secret_group else m.end(0)
+
+            if any(rx.search(secret) for rx in cfg.allowlist_regex):
+                continue
+
+            fingerprint = _sha256_hex(secret)
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+
+            findings.append(
+                Finding(
+                    pattern_id=pat.id,
+                    title=pat.title,
+                    severity=pat.severity,
+                    path=rel_path,
+                    line=line_no,
+                    column=start + 1,
+                    match_redacted=redact(secret),
+                    fingerprint=fingerprint,
+                    message=f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real.",
+                    line_text=redact_in_line(line, start, end),
+                    remediation=pat.remediation,
+                )
+            )
+
+    # Entropy-based detection
+    if enable_entropy and "entropy" not in cfg.disable_rules:
+        for ef in scan_line_entropy(line, line_no):
+            if any(rx.search(ef.value) for rx in cfg.allowlist_regex):
+                continue
+
+            fingerprint = _sha256_hex(ef.value)
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+
+            findings.append(
+                Finding(
+                    pattern_id="entropy-" + ef.charset,
+                    title=f"High-entropy {ef.charset} string in '{ef.var_name}'",
+                    severity=Severity.medium,
+                    path=rel_path,
+                    line=ef.line,
+                    column=ef.column,
+                    match_redacted=redact(ef.value),
+                    fingerprint=fingerprint,
+                    message=(
+                        f"High-entropy {ef.charset} string (entropy={ef.entropy}) "
+                        f"assigned to '{ef.var_name}'. Could be a secret."
+                    ),
+                    line_text=redact_in_line(
+                        line,
+                        ef.column - 1,
+                        ef.column - 1 + len(ef.value),
+                    ),
+                    remediation=(
+                        f"If '{ef.var_name}' holds a real secret, move it to an "
+                        "environment variable or .env file. Add .env to .gitignore."
+                    ),
+                )
+            )
+
+    return findings
+
+
 def _load_gitignore_patterns(root: Path) -> list[str]:
     """Load .gitignore patterns from root, returned as simple glob strings."""
     gitignore = root / ".gitignore"
@@ -89,8 +180,6 @@ def _load_gitignore_patterns(root: Path) -> list[str]:
 
 def _matches_gitignore(rel_path: str, patterns: list[str]) -> bool:
     """Very lightweight gitignore matcher — handles the common cases."""
-    import fnmatch
-
     # Normalise to forward slashes
     norm = rel_path.replace(os.sep, "/")
     name = norm.split("/")[-1]
@@ -141,8 +230,6 @@ def _iter_files(root: Path, cfg: ScanConfig) -> Iterable[Path]:
 
             # Check exclude_paths (fnmatch against rel path)
             if cfg.exclude_paths:
-                import fnmatch
-
                 try:
                     rel = str(fpath.resolve().relative_to(root.resolve()))
                     norm = rel.replace(os.sep, "/")
@@ -164,88 +251,85 @@ def scan_text(
     disabled_rules: set[str] | None = None,
 ) -> list[Finding]:
     cfg = cfg or _default_config()
-    _disabled = disabled_rules or cfg.disable_rules
+    if disabled_rules is not None:
+        # Local override for this call (used by tests/internals).
+        cfg = ScanConfig(
+            max_file_size_bytes=cfg.max_file_size_bytes,
+            exclude_dirs=set(cfg.exclude_dirs),
+            exclude_globs=list(cfg.exclude_globs),
+            exclude_paths=list(cfg.exclude_paths),
+            allowlist_regex=list(cfg.allowlist_regex),
+            disable_rules=set(disabled_rules),
+            respect_gitignore=cfg.respect_gitignore,
+        )
     findings: list[Finding] = []
     # Track fingerprints to avoid duplicate findings from pattern + entropy
     seen_fingerprints: set[str] = set()
 
     for line_no, line in enumerate(text.splitlines(), start=1):
-        # Inline suppression — skip entire line
-        if _line_is_ignored(line):
+        findings.extend(
+            _scan_line(
+                line=line,
+                line_no=line_no,
+                rel_path=rel_path,
+                patterns=patterns,
+                cfg=cfg,
+                enable_entropy=enable_entropy,
+                seen_fingerprints=seen_fingerprints,
+            )
+        )
+
+    return findings
+
+
+def scan_added_lines(
+    *,
+    files: dict[str, list[tuple[int, str]]],
+    root: Path,
+    cfg: ScanConfig | None = None,
+    patterns: Iterable[SecretPattern] = PATTERNS,
+    enable_entropy: bool = True,
+) -> list[Finding]:
+    """
+    Scan only added lines from a git diff, grouped by file.
+
+    Args:
+        files: Mapping of relative file path -> list of (line_no, line_text)
+        root: Repo root used for .gitignore matching
+    """
+    cfg = cfg or _default_config()
+    findings: list[Finding] = []
+    gitignore_patterns = _load_gitignore_patterns(root) if cfg.respect_gitignore else []
+
+    for rel_path, lines in files.items():
+        if not rel_path or not lines:
             continue
 
-        # Pattern-based detection
-        for pat in patterns:
-            if pat.id in _disabled:
-                continue
+        norm = rel_path.replace(os.sep, "/")
 
-            for m in pat.regex.finditer(line):
-                secret = m.group(pat.secret_group) if pat.secret_group else m.group(0)
-                start = m.start(pat.secret_group) if pat.secret_group else m.start(0)
-                end = m.end(pat.secret_group) if pat.secret_group else m.end(0)
+        # Skip excluded dirs quickly by path segments.
+        if any(part in cfg.exclude_dirs for part in Path(norm).parts):
+            continue
 
-                if any(rx.search(secret) for rx in cfg.allowlist_regex):
-                    continue
+        if gitignore_patterns and _matches_gitignore(norm, gitignore_patterns):
+            continue
 
-                fingerprint = _sha256_hex(secret)
-                if fingerprint in seen_fingerprints:
-                    continue
-                seen_fingerprints.add(fingerprint)
+        if cfg.exclude_paths and any(fnmatch.fnmatch(norm, p) for p in cfg.exclude_paths):
+            continue
 
-                findings.append(
-                    Finding(
-                        pattern_id=pat.id,
-                        title=pat.title,
-                        severity=pat.severity,
-                        path=rel_path,
-                        line=line_no,
-                        column=start + 1,
-                        match_redacted=redact(secret),
-                        fingerprint=fingerprint,
-                        message=(
-                            f"{pat.title} detected ({pat.severity.value}). Rotate/revoke if real."
-                        ),
-                        line_text=redact_in_line(line, start, end),
-                        remediation=pat.remediation,
-                    )
+        seen_fingerprints: set[str] = set()
+        for line_no, line in sorted(lines, key=lambda item: item[0]):
+            findings.extend(
+                _scan_line(
+                    line=line,
+                    line_no=line_no,
+                    rel_path=norm,
+                    patterns=patterns,
+                    cfg=cfg,
+                    enable_entropy=enable_entropy,
+                    seen_fingerprints=seen_fingerprints,
                 )
-
-        # Entropy-based detection
-        if enable_entropy and "entropy" not in _disabled:
-            for ef in scan_line_entropy(line, line_no):
-                if any(rx.search(ef.value) for rx in cfg.allowlist_regex):
-                    continue
-
-                fingerprint = _sha256_hex(ef.value)
-                if fingerprint in seen_fingerprints:
-                    continue
-                seen_fingerprints.add(fingerprint)
-
-                findings.append(
-                    Finding(
-                        pattern_id="entropy-" + ef.charset,
-                        title=f"High-entropy {ef.charset} string in '{ef.var_name}'",
-                        severity=Severity.medium,
-                        path=rel_path,
-                        line=ef.line,
-                        column=ef.column,
-                        match_redacted=redact(ef.value),
-                        fingerprint=fingerprint,
-                        message=(
-                            f"High-entropy {ef.charset} string (entropy={ef.entropy}) "
-                            f"assigned to '{ef.var_name}'. Could be a secret."
-                        ),
-                        line_text=redact_in_line(
-                            line,
-                            ef.column - 1,
-                            ef.column - 1 + len(ef.value),
-                        ),
-                        remediation=(
-                            f"If '{ef.var_name}' holds a real secret, move it to an "
-                            "environment variable or .env file. Add .env to .gitignore."
-                        ),
-                    )
-                )
+            )
 
     return findings
 

@@ -10,6 +10,7 @@ from keyburn.scanner import (
     filter_baseline,
     load_baseline,
     save_baseline,
+    scan_added_lines,
     scan_path,
     scan_text,
 )
@@ -261,6 +262,35 @@ def test_only_files_empty_list_returns_no_findings(tmp_path: Path) -> None:
     f.write_text(f"KEY={key}\n")
 
     findings = scan_path(tmp_path, only_files=[])
+    assert findings == []
+
+
+def test_scan_added_lines_detects_only_added_content(tmp_path: Path) -> None:
+    key = "sk_live_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    files = {"src/app.py": [(20, f"STRIPE_KEY={key}")]}
+
+    findings = scan_added_lines(files=files, root=tmp_path)
+    assert len(findings) >= 1
+    assert any(f.pattern_id == "stripe-secret-live" for f in findings)
+    assert all(f.path == "src/app.py" for f in findings)
+    assert any(f.line == 20 for f in findings)
+
+
+def test_scan_added_lines_respects_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("secrets.py\n", encoding="utf-8")
+    key = "sk_live_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    files = {"secrets.py": [(1, f"KEY={key}")]}
+
+    findings = scan_added_lines(files=files, root=tmp_path, cfg=ScanConfig(respect_gitignore=True))
+    assert findings == []
+
+
+def test_scan_added_lines_respects_exclude_paths(tmp_path: Path) -> None:
+    key = "sk_live_" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+    files = {"tests/fixtures/sample.py": [(3, f"KEY={key}")]}
+    cfg = ScanConfig(exclude_paths=["tests/fixtures/**"])
+
+    findings = scan_added_lines(files=files, root=tmp_path, cfg=cfg)
     assert findings == []
 
 

@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .config import load_config
-from .history import scan_history
+from .history import parse_diff_hunks, scan_history
 from .patterns import Severity
 from .redact import redact
 from .sarif import findings_to_sarif
@@ -21,6 +21,7 @@ from .scanner import (
     filter_baseline,
     load_baseline,
     save_baseline,
+    scan_added_lines,
     scan_path,
     should_fail,
     summarize,
@@ -155,44 +156,49 @@ def _parse_history_arg(value: str) -> int | None:
     return parsed
 
 
-def _get_staged_files(repo_root: Path) -> list[Path]:
-    """Return absolute paths of files staged for commit."""
+def _get_changed_lines(repo_root: Path, git_args: list[str]) -> dict[str, list[tuple[int, str]]]:
+    """Return changed (added) lines grouped by relative file path."""
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            ["git", *git_args],
             cwd=repo_root,
             capture_output=True,
             text=True,
             check=True,
         )
-        paths = []
-        for line in result.stdout.splitlines():
-            p = repo_root / line.strip()
-            if p.exists():
-                paths.append(p)
-        return paths
+        grouped: dict[str, list[tuple[int, str]]] = {}
+        for rel_path, line_no, content in parse_diff_hunks(result.stdout):
+            if not rel_path:
+                continue
+            grouped.setdefault(rel_path, []).append((line_no, content))
+        return grouped
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return []
+        return {}
 
 
-def _get_diff_files(repo_root: Path, base_ref: str) -> list[Path]:
-    """Return absolute paths of files changed since base_ref."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACM", base_ref, "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        paths = []
-        for line in result.stdout.splitlines():
-            p = repo_root / line.strip()
-            if p.exists():
-                paths.append(p)
-        return paths
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return []
+def _filter_changed_lines_to_target(
+    changed_lines: dict[str, list[tuple[int, str]]],
+    *,
+    repo_root: Path,
+    target: Path,
+) -> dict[str, list[tuple[int, str]]]:
+    """Limit diff findings to the user-requested path argument."""
+    target_abs = target.resolve()
+    out: dict[str, list[tuple[int, str]]] = {}
+
+    for rel_path, lines in changed_lines.items():
+        abs_path = (repo_root / rel_path).resolve()
+        if target_abs.is_file():
+            if abs_path != target_abs:
+                continue
+        else:
+            try:
+                abs_path.relative_to(target_abs)
+            except ValueError:
+                continue
+        out[rel_path] = lines
+
+    return out
 
 
 @app.command()
@@ -217,7 +223,7 @@ def scan(
     diff: Optional[str] = typer.Option(
         None,
         "--diff",
-        help="Only scan files changed since this git ref (e.g. HEAD~1, main).",
+        help="Only scan added lines changed since this git ref (e.g. HEAD~1, main).",
     ),
     history: Optional[str] = typer.Option(
         None,
@@ -227,7 +233,7 @@ def scan(
     pre_commit: bool = typer.Option(
         False,
         "--pre-commit",
-        help="Only scan files staged for commit (git diff --cached).",
+        help="Only scan added lines staged for commit (git diff --cached).",
     ),
 ) -> None:
     mode_count = int(pre_commit) + int(diff is not None) + int(history is not None)
@@ -237,8 +243,8 @@ def scan(
     cfg = load_config(config)
 
     # Resolve scan mode
-    repo_root = path.resolve() if path.is_dir() else path.resolve().parent
-    only_files: list[Path] | None = None
+    target_path = path.resolve()
+    repo_root = target_path if target_path.is_dir() else target_path.parent
     history_lookup: dict[str, dict[str, str]] = {}
 
     if history is not None:
@@ -256,17 +262,35 @@ def scan(
         }
     else:
         if pre_commit:
-            only_files = _get_staged_files(repo_root)
-            if not only_files:
-                console.print("[dim]No staged files to scan.[/dim]")
+            changed_lines = _get_changed_lines(
+                repo_root,
+                ["diff", "--cached", "--unified=0", "--diff-filter=ACM"],
+            )
+            changed_lines = _filter_changed_lines_to_target(
+                changed_lines,
+                repo_root=repo_root,
+                target=target_path,
+            )
+            if not changed_lines:
+                console.print("[dim]No staged added lines to scan.[/dim]")
                 raise typer.Exit(code=0)
+            all_findings = scan_added_lines(files=changed_lines, root=repo_root, cfg=cfg)
         elif diff is not None:
-            only_files = _get_diff_files(repo_root, diff)
-            if not only_files:
-                console.print("[dim]No changed files to scan.[/dim]")
+            changed_lines = _get_changed_lines(
+                repo_root,
+                ["diff", "--unified=0", "--diff-filter=ACM", diff, "HEAD"],
+            )
+            changed_lines = _filter_changed_lines_to_target(
+                changed_lines,
+                repo_root=repo_root,
+                target=target_path,
+            )
+            if not changed_lines:
+                console.print("[dim]No changed added lines to scan.[/dim]")
                 raise typer.Exit(code=0)
-
-        all_findings = scan_path(path, cfg=cfg, only_files=only_files)
+            all_findings = scan_added_lines(files=changed_lines, root=repo_root, cfg=cfg)
+        else:
+            all_findings = scan_path(path, cfg=cfg)
 
     findings = all_findings
 
@@ -316,6 +340,10 @@ def scan(
         if history is not None:
             hist_label = "all" if _parse_history_arg(history) is None else history
             md += f"- Mode: git history ({hist_label} commit(s))\n"
+        elif pre_commit:
+            md += "- Mode: pre-commit (added lines only)\n"
+        elif diff is not None:
+            md += f"- Mode: diff from {diff} (added lines only)\n"
         if known:
             md += f"- Suppressed by baseline: {len(known)} known finding(s)\n"
         _maybe_write_step_summary(md)

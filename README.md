@@ -30,10 +30,10 @@ keyburn scan .
 # Scan and fail CI on any high-severity finding
 keyburn scan . --fail-on high
 
-# Only scan files changed in this PR
+# Only scan added lines changed in this PR
 keyburn scan . --diff origin/main
 
-# Only scan staged files (pre-commit)
+# Only scan added lines in staged files (pre-commit)
 keyburn scan . --pre-commit
 
 # Output SARIF for GitHub code scanning
