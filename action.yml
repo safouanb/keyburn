@@ -113,8 +113,23 @@ runs:
           const summary = payload.summary || {};
           const findings = Array.isArray(payload.findings) ? payload.findings : [];
           const maxFindings = Math.max(1, Number(process.env.KEYBURN_MAX_FINDINGS || "10"));
-          const shown = findings.slice(0, maxFindings);
+          const severityRank = { high: 3, medium: 2, low: 1 };
+          const sortedFindings = [...findings].sort((a, b) => {
+            const ra = Number(a.risk_score || 0);
+            const rb = Number(b.risk_score || 0);
+            if (rb !== ra) return rb - ra;
+            const sa = severityRank[String(a.severity || "").toLowerCase()] || 0;
+            const sb = severityRank[String(b.severity || "").toLowerCase()] || 0;
+            return sb - sa;
+          });
+          const shown = sortedFindings.slice(0, maxFindings);
           const failOn = process.env.KEYBURN_FAIL_ON || "high";
+
+          const clean = (value) =>
+            String(value || "")
+              .replace(/\|/g, "\\|")
+              .replace(/\r?\n/g, " ")
+              .trim();
 
           const lines = [];
           lines.push(marker);
@@ -128,13 +143,45 @@ runs:
 
           if (shown.length > 0) {
             lines.push("");
-            lines.push("| Severity | Rule | Location |");
-            lines.push("|---|---|---|");
+            lines.push("| Severity | Risk | Provider | Rule | Location |");
+            lines.push("|---|---:|---|---|---|");
             for (const finding of shown) {
-              const sev = String(finding.severity || "").toUpperCase();
-              const rule = String(finding.pattern_id || "");
-              const location = `${finding.path || ""}:${finding.line || ""}`;
-              lines.push(`| ${sev} | \`${rule}\` | \`${location}\` |`);
+              const sev = clean(String(finding.severity || "").toUpperCase());
+              const risk = Number(finding.risk_score || 0);
+              const provider = clean(finding.provider || "unknown");
+              const rule = clean(finding.pattern_id || "");
+              const location = clean(`${finding.path || ""}:${finding.line || ""}`);
+              lines.push(
+                `| ${sev} | ${risk} | \`${provider}\` | \`${rule}\` | \`${location}\` |`
+              );
+            }
+          }
+
+          if (shown.length > 0) {
+            lines.push("");
+            lines.push("### Response playbooks");
+            for (const finding of shown) {
+              const rule = clean(finding.pattern_id || "unknown-rule");
+              const risk = Number(finding.risk_score || 0);
+              const playbookTitle = clean(finding.playbook_title || "Credential Leak Response");
+              const provider = clean(finding.provider || "unknown");
+              lines.push("");
+              lines.push(
+                `- **${playbookTitle}** (\`${provider}\`, \`${rule}\`, risk=${risk})`
+              );
+
+              const steps = Array.isArray(finding.playbook_steps)
+                ? finding.playbook_steps.filter(Boolean).slice(0, 2)
+                : [];
+              if (steps.length > 0) {
+                for (const step of steps) {
+                  lines.push(`  - ${clean(step)}`);
+                }
+              }
+
+              if (finding.rotation_stub) {
+                lines.push(`  - Rotate: \`${clean(finding.rotation_stub)}\``);
+              }
             }
           }
 

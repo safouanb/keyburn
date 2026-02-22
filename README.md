@@ -96,7 +96,7 @@ Or with options:
     fail_on: high          # low | medium | high (default: high)
     format: sarif          # text | json | sarif (default: sarif)
     upload_sarif: "true"   # upload to GitHub code scanning (default: true)
-    comment_pr: "true"     # sticky PR comment summary (default: false)
+    comment_pr: "true"     # sticky PR comment with risk + playbooks (default: false)
 ```
 
 Full workflow example:
