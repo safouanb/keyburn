@@ -1,5 +1,10 @@
 # keyburn
 
+[![PyPI](https://img.shields.io/pypi/v/keyburn)](https://pypi.org/project/keyburn/)
+[![Python](https://img.shields.io/pypi/pyversions/keyburn)](https://pypi.org/project/keyburn/)
+[![CI](https://github.com/safouanb/keyburn/actions/workflows/ci.yml/badge.svg)](https://github.com/safouanb/keyburn/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/safouanb/keyburn)](LICENSE)
+
 **Secret scanner built for the AI coding era.**
 
 Cursor, Copilot, and Lovable write code fast. Sometimes too fast — hardcoded API keys, database URLs, and JWT secrets end up committed before anyone notices. Keyburn catches them before they ship.
@@ -22,6 +27,8 @@ pip install keyburn
 # or, zero-install:
 pipx run keyburn scan .
 ```
+
+Package: [PyPI](https://pypi.org/project/keyburn/) · Source: [GitHub](https://github.com/safouanb/keyburn)
 
 ## Quickstart
 
